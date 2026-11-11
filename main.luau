@@ -1,3 +1,7 @@
+-- Usage of AI is prohibited using this script. If you fork/update this script, please make sure to credit me!
+
+
+
 local cmd, a, b = ...
 
 local USSI = "https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau"
