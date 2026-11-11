@@ -28,7 +28,7 @@ local OPTIONS = {
     SavePlayers = "boolean", DisableCompression = "boolean", DecompileScripts = "boolean",
     SaveNonCreatable = "boolean", SaveNilInstances = "boolean", CopyToClipboard = "boolean",
     IgnoreList = "table", DecompilerOptions = "table", ShowStatus = "boolean",
-    SafeMode = "boolean", SaveMeshes = "boolean", SaveImages = "boolean",
+    SafeMode = "boolean", SaveMeshes = "boolean", SaveImages = "boolean", DisableLogs = "boolean",
 }
 
 local optValues = setmetatable({}, { __mode = "k" })
@@ -41,7 +41,7 @@ function SaveInstanceOptions.new()
         SavePlayers = true, DisableCompression = false, DecompileScripts = true,
         SaveNonCreatable = true, SaveNilInstances = true, CopyToClipboard = false,
         IgnoreList = {}, DecompilerOptions = false, ShowStatus = true,
-        SafeMode = false, SaveMeshes = true, SaveImages = true,
+        SafeMode = false, SaveMeshes = true, SaveImages = true, DisableLogs = false,
     }
     optValues[obj] = v
     setmetatable(obj, {
@@ -85,8 +85,14 @@ local function getSaver()
                 local p = table.pack(...)
                 for i = 1, p.n do p[i] = tostring(p[i]) end
                 table.insert(current.warnings, table.concat(p, " "))
+                if not current.disableLogs then
+                    return genv.print(...)
+                end
             end
-            return print(...)
+        end,
+        print = function(...)
+            if current and current.disableLogs then return end
+            return genv.print(...)
         end,
         decompile = function(scr)
             if current and current.decompiled and getbc then
@@ -129,6 +135,7 @@ local ALIASES = {
     clipboard="CopyToClipboard", ignorelist="IgnoreList", instancesblacklist="IgnoreList", decompileroptions="DecompilerOptions",
     showstatus="ShowStatus", showprogress="ShowStatus", safemode="SafeMode", savemeshes="SaveMeshes",
     meshes="SaveMeshes", exportmeshes="SaveMeshes", saveimages="SaveImages", images="SaveImages", exportimages="SaveImages",
+    disablelogs="DisableLogs", silent="DisableLogs", nologs="DisableLogs", disableconsole="DisableLogs",
 }
 
 local function fromTable(src)
@@ -705,7 +712,7 @@ local function makeUI()
     ussiLbl.TextSize = 14
     ussiLbl.TextColor3 = Color3.fromRGB(255, 200, 100)
     ussiLbl.TextXAlignment = Enum.TextXAlignment.Right
-    ussiLbl.Text = "[oreange decomp] downloading ussi..."
+    ussiLbl.Text = ""
     ussiLbl.LayoutOrder = 1
     ussiLbl.Parent = container
 
@@ -724,7 +731,7 @@ local function makeUI()
     return {
         setUSSI = function(t)
             if ussiLbl and ussiLbl.Parent then
-                ussiLbl.Text = "[oreange decomp] " .. tostring(t)
+                ussiLbl.Text = tostring(t)
             end
         end,
         set = function(t) if statusLbl and statusLbl.Parent then statusLbl.Text = "[oreange decomp] " .. tostring(t) end end,
@@ -834,7 +841,7 @@ local function save(fname, root, options)
     end
 
     while current do task.wait() end
-    local state = { warnings = {}, decompilerOptions = vals.DecompileScripts and vals.DecompilerOptions or nil }
+    local state = { warnings = {}, disableLogs = vals.DisableLogs, decompilerOptions = vals.DecompileScripts and vals.DecompilerOptions or nil }
     current = state
 
     local ui
@@ -842,18 +849,19 @@ local function save(fname, root, options)
 
     local function upd(msg)
         if ui then ui.set(msg) end
-        print(msg)
+        if not vals.DisableLogs then
+            print(msg)
+        end
     end
 
     upd("preparing")
+    if ui then ui.setUSSI("") end
 
     local ok, err = pcall(function()
-        if ui then ui.setUSSI("oreange running ussi") end
         upd("downloading ussi")
         
         local ussi = getSaver()
         
-        if ui then ui.setUSSI("oreange running ussi") end
         upd("ussi ready")
         
         local path = targetPath(vals, root, isPlace)
@@ -914,6 +922,7 @@ local function save(fname, root, options)
         end
 
         upd("serializing")
+        if ui then ui.setUSSI("[oreange decomp V1.2]") end
 
         local okU, errU = pcall(function()
             local ignore = { "CoreGui", "CorePackages", Packages = false }
@@ -984,7 +993,9 @@ local function save(fname, root, options)
             ui.set("failed: " .. tostring(err))
             task.delay(4, function() if ui then ui.kill() end end)
         end
-        error(fname .. " failed: " .. tostring(err), 3)
+        if not vals.DisableLogs then
+            error(fname .. " failed: " .. tostring(err), 3)
+        end
     else
         if ui then ui.setUSSI("oreange decomp finished") end
         task.delay(3, function() if ui then ui.kill() end end)
@@ -1013,5 +1024,8 @@ if cmd == "saveplace" then
 elseif cmd == "saveinstance" then
     saveinstance(a, b)
 else
-    print("oreange decomp ready")
+    local opts = (type(a) == "table" and a) or (type(b) == "table" and b)
+    if not (opts and (opts.DisableLogs or opts.disablelogs)) then
+        print("oreange decomp ready")
+    end
 end
