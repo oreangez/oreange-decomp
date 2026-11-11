@@ -6,7 +6,6 @@ local cmd, a, b = ...
 
 local USSI_URL = "https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau"
 local genv = (type(getgenv) == "function" and getgenv()) or getfenv(0)
-local TweenService = game:GetService("TweenService")
 
 local OPTIONS = {
     FilePath = "string", IgnoreArchivable = "boolean", SavePlayerCharacters = "boolean",
@@ -643,8 +642,7 @@ local function makeUI()
     ussiLbl.TextColor3 = Color3.fromRGB(255, 165, 0)
     ussiLbl.TextXAlignment = Enum.TextXAlignment.Right
     ussiLbl.Text = "[oreange decomp v1.4]"
-    ussiLbl.Position = UDim2.new(1, 500, 0, 0)
-    ussiLbl.TextTransparency = 1
+    ussiLbl.Position = UDim2.new(0, 0, 0, 0)
     ussiLbl.Parent = container
 
     local statusLbl = Instance.new("TextLabel")
@@ -656,8 +654,7 @@ local function makeUI()
     statusLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
     statusLbl.TextXAlignment = Enum.TextXAlignment.Right
     statusLbl.Text = "loading"
-    statusLbl.Position = UDim2.new(1, 500, 0, 18)
-    statusLbl.TextTransparency = 1
+    statusLbl.Position = UDim2.new(0, 0, 0, 18)
     statusLbl.Parent = container
 
     local lossLbl = Instance.new("TextLabel")
@@ -669,8 +666,7 @@ local function makeUI()
     lossLbl.TextColor3 = Color3.fromRGB(255, 50, 50)
     lossLbl.TextXAlignment = Enum.TextXAlignment.Right
     lossLbl.Text = "textures loss: 0"
-    lossLbl.Position = UDim2.new(1, 500, 0, 36)
-    lossLbl.TextTransparency = 1
+    lossLbl.Position = UDim2.new(0, 0, 0, 36)
     lossLbl.Visible = false
     lossLbl.Parent = container
 
@@ -683,8 +679,7 @@ local function makeUI()
     warnLbl.TextColor3 = Color3.fromRGB(255, 100, 100)
     warnLbl.TextXAlignment = Enum.TextXAlignment.Right
     warnLbl.Text = "way to many texutres, folder size will be large"
-    warnLbl.Position = UDim2.new(1, 500, 0, 54)
-    warnLbl.TextTransparency = 1
+    warnLbl.Position = UDim2.new(0, 0, 0, 54)
     warnLbl.Visible = false
     warnLbl.Parent = container
 
@@ -712,25 +707,6 @@ local function makeUI()
             end
         end)
     end
-
-    local function slideInLabel(lbl, targetY, delay)
-        task.spawn(function()
-            task.wait(delay)
-            local tweenInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-            local goal = {
-                Position = UDim2.new(1, 0, 0, targetY),
-                TextTransparency = 0
-            }
-            TweenService:Create(lbl, tweenInfo, goal):Play()
-        end)
-    end
-
-    task.spawn(function()
-        slideInLabel(ussiLbl, 0, 0)
-        slideInLabel(statusLbl, 18, 0.1)
-        slideInLabel(lossLbl, 36, 0.2)
-        slideInLabel(warnLbl, 54, 0.3)
-    end)
 
     return {
         setUSSI = function(t)
@@ -763,16 +739,7 @@ local function makeUI()
         showWarning = function()
             if warnLbl and warnLbl.Parent then warnLbl.Visible = true end
         end,
-        kill = function() 
-            local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Linear)
-            TweenService:Create(ussiLbl, tweenInfo, {TextTransparency = 1}):Play()
-            TweenService:Create(statusLbl, tweenInfo, {TextTransparency = 1}):Play()
-            TweenService:Create(lossLbl, tweenInfo, {TextTransparency = 1}):Play()
-            TweenService:Create(warnLbl, tweenInfo, {TextTransparency = 1}):Play()
-            task.delay(0.35, function() 
-                pcall(function() gui:Destroy() end) 
-            end)
-        end,
+        kill = function() pcall(function() gui:Destroy() end) end,
     }
 end
 
