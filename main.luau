@@ -2,8 +2,6 @@
 --If you fork/update this script, please make sure to credit me!
 --Found bugs? contact @oreangez on discord
 
-
-
 local cmd, a, b = ...
 
 local USSI = "https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau"
@@ -177,18 +175,24 @@ end
 local function sanitize(name)
     if not name or name == "" then return "unknown" end
     local clean = string.gsub(name, "[^%w%-_ ]", "")
+    clean = string.match(clean, "^%s*(.-)%s*$")
     if clean == "" then return "unknown" end
     return clean
 end
 
 local function genPath(root, isModel)
     local baseName = ""
-    if isModel and root then
+    if isModel and root and root.Name then
         baseName = root.Name
     else
-        baseName = game.Name ~= "" and game.Name or "game"
+        baseName = game.Name
     end
     baseName = sanitize(baseName)
+    
+    if baseName == "unknown" or baseName == "Place" or baseName == "Game" then
+        baseName = isModel and "Model" or "Game"
+    end
+    
     local folder = "oreange decomp"
     if not isfolder(folder) then makefolder(folder) end
     
@@ -646,7 +650,7 @@ end
 
 local function makeUI()
     local gui = Instance.new("ScreenGui")
-    gui.Name = "oreangeDecompUI_" .. tostring(math.random(100000, 999999))
+    gui.Name = "oreangeDecompUI"
     gui.IgnoreGuiInset = true
     gui.ResetOnSpawn = false
     gui.DisplayOrder = 2147483647
@@ -658,26 +662,54 @@ local function makeUI()
         if pl then gui.Parent = pl:WaitForChild("PlayerGui") end
     end
 
-    local lbl = Instance.new("TextLabel")
-    lbl.Name = "Status"
-    lbl.AnchorPoint = Vector2.new(1, 1)
-    lbl.Position = UDim2.new(1, -12, 1, -12)
-    lbl.Size = UDim2.new(0, 800, 0, 22)
-    lbl.BackgroundTransparency = 1
-    lbl.BorderSizePixel = 0
-    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    lbl.TextXAlignment = Enum.TextXAlignment.Right
-    lbl.TextYAlignment = Enum.TextYAlignment.Bottom
-    lbl.Font = Enum.Font.SourceSansSemibold
-    lbl.TextSize = 16
-    lbl.TextStrokeTransparency = 1
-    lbl.TextTransparency = 0
-    lbl.TextTruncate = Enum.TextTruncate.AtEnd
-    lbl.Text = "[oreange decomp] starting"
-    lbl.Parent = gui
+    local container = Instance.new("Frame")
+    container.Name = "Container"
+    container.AnchorPoint = Vector2.new(1, 0)
+    container.Position = UDim2.new(1, -15, 0, 15)
+    container.Size = UDim2.new(0, 500, 0, 40)
+    container.BackgroundTransparency = 1
+    container.Parent = gui
+
+    local uil = Instance.new("UIListLayout")
+    uil.Parent = container
+    uil.HorizontalAlignment = Enum.HorizontalAlignment.Right
+    uil.SortOrder = Enum.SortOrder.LayoutOrder
+    uil.Padding = UDim.new(0, 2)
+
+    local ussiLbl = Instance.new("TextLabel")
+    ussiLbl.Name = "USSI"
+    ussiLbl.BackgroundTransparency = 1
+    ussiLbl.Size = UDim2.new(1, 0, 0, 16)
+    ussiLbl.Font = Enum.Font.Code
+    ussiLbl.TextSize = 14
+    ussiLbl.TextColor3 = Color3.fromRGB(255, 200, 100)
+    ussiLbl.TextXAlignment = Enum.TextXAlignment.Right
+    ussiLbl.Text = "[oreange decomp] downloading ussi..."
+    ussiLbl.LayoutOrder = 1
+    ussiLbl.Parent = container
+
+    local statusLbl = Instance.new("TextLabel")
+    statusLbl.Name = "StatusText"
+    statusLbl.BackgroundTransparency = 1
+    statusLbl.Size = UDim2.new(1, 0, 0, 16)
+    statusLbl.Font = Enum.Font.Code
+    statusLbl.TextSize = 14
+    statusLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    statusLbl.TextXAlignment = Enum.TextXAlignment.Right
+    statusLbl.Text = "[oreange decomp] starting..."
+    statusLbl.LayoutOrder = 2
+    statusLbl.Parent = container
 
     return {
-        set = function(t) if lbl and lbl.Parent then lbl.Text = "[oreange decomp] " .. tostring(t) end end,
+        setUSSI = function(t)
+            if ussiLbl and ussiLbl.Parent then
+                ussiLbl.Text = "[oreange decomp] " .. tostring(t)
+                if t:lower():find("ready") then
+                    task.delay(3, function() if ussiLbl and ussiLbl.Parent then ussiLbl.Text = "" end end)
+                end
+            end
+        end,
+        set = function(t) if statusLbl and statusLbl.Parent then statusLbl.Text = "[oreange decomp] " .. tostring(t) end end,
         kill = function() pcall(function() gui:Destroy() end) end,
     }
 end
@@ -798,10 +830,16 @@ local function save(fname, root, options)
     upd("preparing")
 
     local ok, err = pcall(function()
+        if ui then ui.setUSSI("downloading ussi") end
         upd("downloading ussi")
+        
         local ussi = getSaver()
+        
+        if ui then ui.setUSSI("ussi ready") end
+        upd("ussi ready")
+        
         local path = targetPath(vals, root, isPlace)
-        local base = path and (string.gsub(path, "%.[^/\\%.]+$", "")) or ("oreange decomp/game " .. tostring(game.PlaceId))
+        local base = path and (string.gsub(path, "%.[^/\\%.]+$", "")) or ("oreange decomp/Game")
         local meshDir = base .. "/meshes"
         local texDir = base .. "/textures"
 
@@ -956,7 +994,5 @@ if cmd == "saveplace" then
 elseif cmd == "saveinstance" then
     saveinstance(a, b)
 else
-    print("oreange decomp ready")
-end
     print("oreange decomp ready")
 end
