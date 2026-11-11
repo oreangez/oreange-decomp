@@ -514,7 +514,7 @@ local function exportMeshes(entries, dir)
     return rep
 end
 
-local function exportImages(entries, dir)
+local function exportImages(entries, dir, onLoss, onRetry)
     local rep = { saved = 0, failed = 0, reason = nil, patches = {}, done = false }
     if #entries == 0 then rep.done = true; return rep end
     local svc = game:GetService("AssetService")
@@ -526,9 +526,31 @@ local function exportImages(entries, dir)
     end
     local made = false
     local idx, running = 0, math.min(WORKERS, #entries)
+    
     local function one(entry)
-        local img, reason = loadImg(svc, entry.url)
-        if not img then rep.failed += 1; rep.reason = rep.reason or reason or "unknown"; return end
+        local url = entry.url
+        local img, reason
+        local success = false
+        
+        for attempt = 1, 3 do
+            img, reason = loadImg(svc, url)
+            if img then
+                success = true
+                break
+            end
+            if attempt < 3 then
+                if onRetry then onRetry() end
+                task.wait(1.5)
+            end
+        end
+        
+        if not success then
+            rep.failed += 1
+            if onLoss then onLoss(rep.failed) end
+            rep.reason = rep.reason or reason or "unknown"
+            return
+        end
+        
         local okSz, sz = pcall(function() return img.Size end)
         if not okSz or not sz then
             pcall(img.Destroy, img)
@@ -540,7 +562,7 @@ local function exportImages(entries, dir)
         if not okPx or not pixels then rep.failed += 1; rep.reason = rep.reason or tostring(pixels); return end
         local okE, png = pcall(pngEncode, w, h, pixels)
         if not okE then rep.failed += 1; rep.reason = rep.reason or tostring(png); return end
-        local name = imgName(entry.url)
+        local name = imgName(url)
         if not made then made = true; mkFolder(dir) end
         local okW, werr = pcall(writefile, dir .. "/" .. name, png)
         if not okW then rep.failed += 1; rep.reason = rep.reason or tostring(werr); return end
@@ -694,7 +716,7 @@ local function makeUI()
     container.Name = "Container"
     container.AnchorPoint = Vector2.new(1, 0)
     container.Position = UDim2.new(1, -15, 0, 15)
-    container.Size = UDim2.new(0, 500, 0, 40)
+    container.Size = UDim2.new(0, 500, 0, 80)
     container.BackgroundTransparency = 1
     container.Parent = gui
 
@@ -728,13 +750,57 @@ local function makeUI()
     statusLbl.LayoutOrder = 2
     statusLbl.Parent = container
 
+    local lossLbl = Instance.new("TextLabel")
+    lossLbl.Name = "LossText"
+    lossLbl.BackgroundTransparency = 1
+    lossLbl.Size = UDim2.new(1, 0, 0, 16)
+    lossLbl.Font = Enum.Font.Code
+    lossLbl.TextSize = 14
+    lossLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    lossLbl.TextXAlignment = Enum.TextXAlignment.Right
+    lossLbl.Text = "textures loss: 0"
+    lossLbl.LayoutOrder = 3
+    lossLbl.Parent = container
+
+    local warnLbl = Instance.new("TextLabel")
+    warnLbl.Name = "WarnText"
+    warnLbl.BackgroundTransparency = 1
+    warnLbl.Size = UDim2.new(1, 0, 0, 16)
+    warnLbl.Font = Enum.Font.Code
+    warnLbl.TextSize = 14
+    warnLbl.TextColor3 = Color3.fromRGB(255, 100, 100)
+    warnLbl.TextXAlignment = Enum.TextXAlignment.Right
+    warnLbl.Text = "way to many texutres, folder size will be large"
+    warnLbl.LayoutOrder = 4
+    warnLbl.Visible = false
+    warnLbl.Parent = container
+
     return {
         setUSSI = function(t)
             if ussiLbl and ussiLbl.Parent then
                 ussiLbl.Text = tostring(t)
             end
         end,
-        set = function(t) if statusLbl and statusLbl.Parent then statusLbl.Text = "[oreange decomp] " .. tostring(t) end end,
+        set = function(t) 
+            if statusLbl and statusLbl.Parent then statusLbl.Text = "[oreange decomp] " .. tostring(t) end 
+        end,
+        setLoss = function(count)
+            if lossLbl and lossLbl.Parent then
+                lossLbl.Text = "textures loss: " .. tostring(count)
+                lossLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+            end
+        end,
+        setRetry = function()
+            if lossLbl and lossLbl.Parent then
+                lossLbl.Text = "textures loss: retrying..."
+                lossLbl.TextColor3 = Color3.fromRGB(255, 50, 50)
+            end
+        end,
+        showWarning = function()
+            if warnLbl and warnLbl.Parent then
+                warnLbl.Visible = true
+            end
+        end,
         kill = function() pcall(function() gui:Destroy() end) end,
     }
 end
@@ -894,8 +960,21 @@ local function save(fname, root, options)
         end
 
         if vals.SaveImages and #images > 0 then
+            if #images > 500 then
+                WORKERS = 16
+                if ui then ui.showWarning() end
+                upd("way to many texutres, folder size will be large")
+            end
+            
             upd("extracting textures")
-            local rep = exportImages(images, texDir)
+            local rep = exportImages(images, texDir,
+                function(lossCount)
+                    if ui then ui.setLoss(lossCount) end
+                end,
+                function()
+                    if ui then ui.setRetry() end
+                end
+            )
             local lastDone = -1
             while not rep.done do
                 local cur = rep.saved + rep.failed
