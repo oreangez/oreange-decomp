@@ -1,5 +1,6 @@
 --Usage of AI is prohibited using this script. 
 --If you fork/update this script, please make sure to credit me!
+--Found bugs? contact @oreangez on discord
 
 
 
