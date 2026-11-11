@@ -174,20 +174,36 @@ local function mkFolder(f)
     if f and f ~= "" then mkParents(f .. "/_") end
 end
 
-local function genPath(isModel)
-    local base = (isModel and "model " or "place ") .. tostring(game.PlaceId)
+local function sanitize(name)
+    if not name or name == "" then return "unknown" end
+    local clean = string.gsub(name, "[^%w%-_ ]", "")
+    if clean == "" then return "unknown" end
+    return clean
+end
+
+local function genPath(root, isModel)
+    local baseName = ""
+    if isModel and root then
+        baseName = root.Name
+    else
+        baseName = game.Name ~= "" and game.Name or "game"
+    end
+    baseName = sanitize(baseName)
+    local folder = "oreange decomp"
+    if not isfolder(folder) then makefolder(folder) end
+    
     local ext = isModel and ".rbxm" or ".rbxl"
-    local p = base .. ext
+    local p = folder .. "/" .. baseName .. ext
     local n = 0
-    while isfile(p) do n += 1; p = base .. " (" .. n .. ")" .. ext end
+    while isfile(p) do n += 1; p = folder .. "/" .. baseName .. " (" .. n .. ")" .. ext end
     return p
 end
 
-local function targetPath(v, isPlace)
+local function targetPath(v, root, isPlace)
     local p = v.FilePath
     if p == "" then
         if v.CopyToClipboard then return nil end
-        return genPath(not isPlace)
+        return genPath(root, not isPlace)
     elseif not string.match(p, "%.[^/\\]+$") then
         return p .. (isPlace and ".rbxl" or ".rbxm")
     end
@@ -652,7 +668,7 @@ local function makeUI()
     lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
     lbl.TextXAlignment = Enum.TextXAlignment.Right
     lbl.TextYAlignment = Enum.TextYAlignment.Bottom
-    lbl.Font = Enum.Font.GothamBold
+    lbl.Font = Enum.Font.SourceSansSemibold
     lbl.TextSize = 16
     lbl.TextStrokeTransparency = 1
     lbl.TextTransparency = 0
@@ -784,8 +800,8 @@ local function save(fname, root, options)
     local ok, err = pcall(function()
         upd("downloading ussi")
         local ussi = getSaver()
-        local path = targetPath(vals, isPlace)
-        local base = path and (string.gsub(path, "%.[^/\\%.]+$", "")) or ("place " .. tostring(game.PlaceId))
+        local path = targetPath(vals, root, isPlace)
+        local base = path and (string.gsub(path, "%.[^/\\%.]+$", "")) or ("oreange decomp/game " .. tostring(game.PlaceId))
         local meshDir = base .. "/meshes"
         local texDir = base .. "/textures"
 
@@ -801,9 +817,14 @@ local function save(fname, root, options)
         if vals.SaveMeshes and #meshes > 0 then
             upd("extracting meshes")
             local rep = exportMeshes(meshes, meshDir)
+            local lastDone = -1
             while not rep.done do
-                upd(string.format("meshes %d/%d", rep.saved + rep.failed, #meshes))
-                task.wait(0.08)
+                local cur = rep.saved + rep.failed
+                if cur ~= lastDone then
+                    lastDone = cur
+                    upd(string.format("meshes %d/%d", cur, #meshes))
+                end
+                task.wait(0.1)
             end
             upd(string.format("meshes done: %d ok, %d failed", rep.saved, rep.failed))
         end
@@ -811,9 +832,14 @@ local function save(fname, root, options)
         if vals.SaveImages and #images > 0 then
             upd("extracting textures")
             local rep = exportImages(images, texDir)
+            local lastDone = -1
             while not rep.done do
-                upd(string.format("textures %d/%d", rep.saved + rep.failed, #images))
-                task.wait(0.08)
+                local cur = rep.saved + rep.failed
+                if cur ~= lastDone then
+                    lastDone = cur
+                    upd(string.format("textures %d/%d", cur, #images))
+                end
+                task.wait(0.1)
             end
             upd(string.format("textures done: %d ok, %d failed", rep.saved, rep.failed))
         end
@@ -930,5 +956,7 @@ if cmd == "saveplace" then
 elseif cmd == "saveinstance" then
     saveinstance(a, b)
 else
+    print("oreange decomp ready")
+end
     print("oreange decomp ready")
 end
