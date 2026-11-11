@@ -1,34 +1,14 @@
---Usage of AI is prohibited using this script. 
---If you fork/update this script, please make sure to credit me!
---Found bugs? contact @oreangez on discord
-
 local cmd, a, b = ...
 
-local USSI = "https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau"
+local USSI_URL = "https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau"
 local genv = (type(getgenv) == "function" and getgenv()) or getfenv(0)
-local DECOMP = genv.__OREANGE_DECOMPILER_URL or "http://127.0.0.1:4128/luau/decompile"
-local BATCH_URL = DECOMP .. "/batch"
-local BATCH_SCRIPTS = 200
-local BATCH_BYTES = 4 * 1024 * 1024
-local BATCHES_IN_FLIGHT = 4
-local WORKERS = 8
-
-local function pick(...)
-    for _, v in {...} do if type(v) == "function" then return v end end
-end
-
-local requestFn = pick(genv.request, genv.http_request, type(syn) == "table" and syn.request, type(http) == "table" and http.request)
-local getbc = pick(genv.getscriptbytecode)
-local getnil = pick(genv.getnilinstances)
-local setclip = pick(genv.setrbxclipboard, genv.setclipboard, genv.toclipboard)
-local delfileFn = pick(genv.delfile)
 
 local OPTIONS = {
     FilePath = "string", IgnoreArchivable = "boolean", SavePlayerCharacters = "boolean",
-    SavePlayers = "boolean", DisableCompression = "boolean", DecompileScripts = "boolean",
-    SaveNonCreatable = "boolean", SaveNilInstances = "boolean", CopyToClipboard = "boolean",
-    IgnoreList = "table", DecompilerOptions = "table", ShowStatus = "boolean",
-    SafeMode = "boolean", SaveMeshes = "boolean", SaveImages = "boolean", DisableLogs = "boolean",
+    SavePlayers = "boolean", DisableCompression = "boolean", SaveNonCreatable = "boolean",
+    SaveNilInstances = "boolean", CopyToClipboard = "boolean", IgnoreList = "table",
+    ShowStatus = "boolean", SafeMode = "boolean", SaveMeshes = "boolean", 
+    SaveImages = "boolean", DisableLogs = "boolean", TextureQuality = "number"
 }
 
 local optValues = setmetatable({}, { __mode = "k" })
@@ -38,15 +18,13 @@ function SaveInstanceOptions.new()
     local obj = {}
     local v = {
         FilePath = "", IgnoreArchivable = true, SavePlayerCharacters = true,
-        SavePlayers = true, DisableCompression = false, DecompileScripts = true,
-        SaveNonCreatable = true, SaveNilInstances = true, CopyToClipboard = false,
-        IgnoreList = {}, DecompilerOptions = false, ShowStatus = true,
-        SafeMode = false, SaveMeshes = true, SaveImages = true, DisableLogs = false,
+        SavePlayers = true, DisableCompression = false, SaveNonCreatable = true, 
+        SaveNilInstances = true, CopyToClipboard = false, IgnoreList = {}, 
+        ShowStatus = true, SafeMode = false, SaveMeshes = true, 
+        SaveImages = true, DisableLogs = false, TextureQuality = 1
     }
     optValues[obj] = v
     setmetatable(obj, {
-        __type = "SaveInstanceOptions",
-        __metatable = "locked",
         __tostring = function() return "SaveInstanceOptions" end,
         __index = function(_, k)
             if OPTIONS[k] == nil then error(tostring(k) .. " is not a valid member", 2) end
@@ -71,71 +49,16 @@ function SaveInstanceOptions.new()
     return obj
 end
 
-local saver, current
-
-local function getSaver()
-    if saver then return saver end
-    local ok, src = pcall(game.HttpGet, game, USSI)
-    if not ok or type(src) ~= "string" or #src == 0 then error("could not download ussi", 0) end
-    local chunk, err = loadstring(src, "saveinstance")
-    if not chunk then error("could not compile ussi: " .. tostring(err), 0) end
-    local env = setmetatable({
-        warn = function(...)
-            if current then
-                local p = table.pack(...)
-                for i = 1, p.n do p[i] = tostring(p[i]) end
-                table.insert(current.warnings, table.concat(p, " "))
-                if not current.disableLogs then
-                    return genv.print(...)
-                end
-            end
-        end,
-        print = function(...)
-            if current and current.disableLogs then return end
-            return genv.print(...)
-        end,
-        decompile = function(scr)
-            if current and current.decompiled and getbc then
-                local ok2, bc = pcall(getbc, scr, true)
-                if ok2 and type(bc) == "string" and current.decompiled[bc] then return current.decompiled[bc] end
-            end
-            return "-- decompile failed"
-        end,
-        getscriptbytecode = getbc or function() return "" end,
-        getcustomasset = function(p) return p end,
-        getnilinstances = getnil or function() return {} end,
-        getgc = function() return {} end,
-        cloneref = function(o) return o end,
-        gethui = function() return game:GetService("CoreGui") end,
-        isreadonly = function() return false end,
-        setreadonly = function() end,
-        hookfunction = function() end,
-        getrawmetatable = function(o) return getmetatable(o) end,
-        request = requestFn,
-        writefile = writefile,
-        readfile = readfile,
-        isfile = isfile,
-        isfolder = isfolder,
-        makefolder = makefolder,
-        setrbxclipboard = setclip or function() end,
-    }, { __index = genv })
-    setfenv(chunk, env)
-    local r = chunk()
-    if type(r) ~= "function" then error("ussi did not return a function", 0) end
-    saver = r
-    return r
-end
-
 local ALIASES = {
-    filepath="FilePath", filename="FilePath", ignorearchivable="IgnoreArchivable", ignorenotarchivable="IgnoreArchivable",
+    filepath="FilePath", filename="FilePath", ignorearchivable="IgnoreArchivable",
     saveplayercharacters="SavePlayerCharacters", savecharacters="SavePlayerCharacters", saveplayers="SavePlayers",
-    isolateplayers="SavePlayers", disablecompression="DisableCompression", decompilescripts="DecompileScripts",
-    decompile="DecompileScripts", savenoncreatable="SaveNonCreatable", savenotcreatable="SaveNonCreatable",
-    savenilinstances="SaveNilInstances", nilinstances="SaveNilInstances", copytoclipboard="CopyToClipboard",
-    clipboard="CopyToClipboard", ignorelist="IgnoreList", instancesblacklist="IgnoreList", decompileroptions="DecompilerOptions",
-    showstatus="ShowStatus", showprogress="ShowStatus", safemode="SafeMode", savemeshes="SaveMeshes",
-    meshes="SaveMeshes", exportmeshes="SaveMeshes", saveimages="SaveImages", images="SaveImages", exportimages="SaveImages",
-    disablelogs="DisableLogs", silent="DisableLogs", nologs="DisableLogs", disableconsole="DisableLogs",
+    isolateplayers="SavePlayers", disablecompression="DisableCompression", savenoncreatable="SaveNonCreatable", 
+    savenotcreatable="SaveNonCreatable", savenilinstances="SaveNilInstances", nilinstances="SaveNilInstances", 
+    copytoclipboard="CopyToClipboard", clipboard="CopyToClipboard", ignorelist="IgnoreList", 
+    instancesblacklist="IgnoreList", showstatus="ShowStatus", showprogress="ShowStatus", safemode="SafeMode", 
+    savemeshes="SaveMeshes", meshes="SaveMeshes", exportmeshes="SaveMeshes", saveimages="SaveImages", 
+    images="SaveImages", exportimages="SaveImages", disablelogs="DisableLogs", silent="DisableLogs", 
+    nologs="DisableLogs", disableconsole="DisableLogs", texturequality="TextureQuality", quality="TextureQuality"
 }
 
 local function fromTable(src)
@@ -143,18 +66,14 @@ local function fromTable(src)
     for k, val in src do
         if type(k) == "string" then
             local low = string.lower(k)
-            if low == "noscripts" and type(val) == "boolean" then
-                obj.DecompileScripts = not val
-            else
-                local name = ALIASES[low]
-                if name and type(val) == OPTIONS[name] then
-                    if name == "IgnoreList" then
-                        local list = {}
-                        for _, item in val do if typeof(item) == "Instance" then table.insert(list, item) end end
-                        val = list
-                    end
-                    obj[name] = val
+            local name = ALIASES[low]
+            if name and type(val) == OPTIONS[name] then
+                if name == "IgnoreList" then
+                    local list = {}
+                    for _, item in val do if typeof(item) == "Instance" then table.insert(list, item) end end
+                    val = list
                 end
+                obj[name] = val
             end
         end
     end
@@ -432,6 +351,23 @@ local function pngEncode(w, h, rgba)
     })
 end
 
+local function scaleBuffer(rgba, w, h, quality)
+    if quality >= 1 then return rgba, w, h end
+    local nw, nh = math.floor(w * quality), math.floor(h * quality)
+    if nw < 1 or nh < 1 then return rgba, w, h end
+    local newBuf = buffer.create(nw * nh * 4)
+    for y = 0, nh - 1 do
+        for x = 0, nw - 1 do
+            local srcX = math.floor(x / quality)
+            local srcY = math.floor(y / quality)
+            local srcIdx = (srcY * w + srcX) * 4
+            local dstIdx = (y * nw + x) * 4
+            buffer.writeu32(newBuf, dstIdx, buffer.readu32(rgba, srcIdx))
+        end
+    end
+    return newBuf, nw, nh
+end
+
 local IMG_PROPS = {
     Decal = { "Texture" },
     Texture = { "Texture" },
@@ -481,7 +417,7 @@ local function exportMeshes(entries, dir)
     local hasPart = hasMethod(svc, "CreateEditableMeshFromPartAsync")
     local hasCreate = hasMethod(svc, "CreateEditableMeshAsync")
     local made = false
-    local idx, running = 0, math.min(WORKERS, #entries)
+    local idx, running = 0, math.min(16, #entries)
     local function one(entry)
         local m, reason = loadMesh(svc, entry.part, entry.id, hasPart, hasCreate)
         if not m then rep.failed += 1; rep.reason = rep.reason or reason or "unknown"; return end
@@ -514,7 +450,7 @@ local function exportMeshes(entries, dir)
     return rep
 end
 
-local function exportImages(entries, dir, onLoss, onRetry)
+local function exportImages(entries, dir, state, updateUI)
     local rep = { saved = 0, failed = 0, reason = nil, patches = {}, done = false }
     if #entries == 0 then rep.done = true; return rep end
     local svc = game:GetService("AssetService")
@@ -525,28 +461,17 @@ local function exportImages(entries, dir, onLoss, onRetry)
         return rep
     end
     local made = false
-    local idx, running = 0, math.min(WORKERS, #entries)
+    local idx, running = 0, 32
+    local quality = state.textureQuality
     
     local function one(entry)
         local url = entry.url
-        local img, reason
-        local success = false
+        local img, reason = loadImg(svc, url)
         
-        for attempt = 1, 3 do
-            img, reason = loadImg(svc, url)
-            if img then
-                success = true
-                break
-            end
-            if attempt < 3 then
-                if onRetry then onRetry() end
-                task.wait(1.5)
-            end
-        end
-        
-        if not success then
+        if not img then
             rep.failed += 1
-            if onLoss then onLoss(rep.failed) end
+            state.textureLoss += 1
+            pcall(updateUI)
             rep.reason = rep.reason or reason or "unknown"
             return
         end
@@ -560,6 +485,12 @@ local function exportImages(entries, dir, onLoss, onRetry)
         local okPx, pixels = pcall(function() return img:ReadPixelsBuffer(Vector2.zero, Vector2.new(w, h)) end)
         pcall(img.Destroy, img)
         if not okPx or not pixels then rep.failed += 1; rep.reason = rep.reason or tostring(pixels); return end
+        
+        local okScale, scaledPixels, nw, nh = pcall(scaleBuffer, pixels, w, h, quality)
+        if okScale and scaledPixels then
+            pixels, w, h = scaledPixels, nw, nh
+        end
+        
         local okE, png = pcall(pngEncode, w, h, pixels)
         if not okE then rep.failed += 1; rep.reason = rep.reason or tostring(png); return end
         local name = imgName(url)
@@ -590,16 +521,6 @@ end
 
 local NEVER = { CoreGui = true, CorePackages = true }
 
-local function isClient(inst, cls)
-    if cls == "ModuleScript" then return true end
-    local ok, r = pcall(function()
-        if cls == "LocalScript" then return inst.RunContext ~= Enum.RunContext.Server end
-        if cls == "Script" then return inst.RunContext == Enum.RunContext.Client end
-        return false
-    end)
-    return ok and r
-end
-
 local function collect(isPlace, root, vals, onProgress)
     local blocked = {}
     for _, item in vals.IgnoreList do blocked[item] = true end
@@ -614,26 +535,14 @@ local function collect(isPlace, root, vals, onProgress)
         local ok, list = pcall(item.GetDescendants, item)
         if ok then for _, d in list do skip[d] = true end end
     end
-    local scripts = {}
     local meshes, meshKey = {}, {}
     local images, imgKey = {}, {}
-    local wantScripts = vals.DecompileScripts and getbc ~= nil
     local wantMeshes = vals.SaveMeshes
     local wantImages = vals.SaveImages
 
     local function consider(inst)
         if skip[inst] then return end
         local cls = inst.ClassName
-        if wantScripts then
-            local okC, isC = pcall(isClient, inst, cls)
-            if okC and isC then
-                local ok, bc = pcall(getbc, inst, true)
-                if ok and type(bc) == "string" and #bc > 0 and not meshKey["bc:" .. bc] then
-                    meshKey["bc:" .. bc] = true
-                    scripts[#scripts+1] = { name = string.sub((string.gsub(inst.Name, "[^%w_]", "")), 1, 64), bytecode = bc }
-                end
-            end
-        end
         if wantMeshes then
             local id = meshIdOf(inst, cls)
             if id then
@@ -689,13 +598,13 @@ local function collect(isPlace, root, vals, onProgress)
         walk(root)
         if onProgress then onProgress(1, 1, tostring(root)) end
     end
-    if vals.SaveNilInstances and getnil then
-        local ok, list = pcall(getnil)
+    if vals.SaveNilInstances and getnilinstances then
+        local ok, list = pcall(getnilinstances)
         if ok and type(list) == "table" then
             for _, inst in list do if typeof(inst) == "Instance" then walk(inst) end end
         end
     end
-    return scripts, meshes, images
+    return meshes, images
 end
 
 local function makeUI()
@@ -746,7 +655,7 @@ local function makeUI()
     statusLbl.TextSize = 14
     statusLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
     statusLbl.TextXAlignment = Enum.TextXAlignment.Right
-    statusLbl.Text = "[oreange decomp] starting..."
+    statusLbl.Text = "[oreange decomp] loading"
     statusLbl.LayoutOrder = 2
     statusLbl.Parent = container
 
@@ -775,115 +684,46 @@ local function makeUI()
     warnLbl.Visible = false
     warnLbl.Parent = container
 
+    local function animateDots(baseText)
+        task.spawn(function()
+            local dots = 1
+            while statusLbl.Text:find(baseText) do
+                statusLbl.Text = "[oreange decomp] " .. baseText .. string.rep(".", dots)
+                dots = dots % 3 + 1
+                task.wait(0.4)
+            end
+        end)
+    end
+
     return {
         setUSSI = function(t)
-            if ussiLbl and ussiLbl.Parent then
-                ussiLbl.Text = tostring(t)
-            end
+            if ussiLbl and ussiLbl.Parent then ussiLbl.Text = tostring(t) end
         end,
         set = function(t) 
             if statusLbl and statusLbl.Parent then statusLbl.Text = "[oreange decomp] " .. tostring(t) end 
         end,
+        animate = animateDots,
         setLoss = function(count)
             if lossLbl and lossLbl.Parent then
                 lossLbl.Text = "textures loss: " .. tostring(count)
-                lossLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-            end
-        end,
-        setRetry = function()
-            if lossLbl and lossLbl.Parent then
-                lossLbl.Text = "textures loss: retrying..."
-                lossLbl.TextColor3 = Color3.fromRGB(255, 50, 50)
             end
         end,
         showWarning = function()
-            if warnLbl and warnLbl.Parent then
-                warnLbl.Visible = true
-            end
+            if warnLbl and warnLbl.Parent then warnLbl.Visible = true end
         end,
         kill = function() pcall(function() gui:Destroy() end) end,
     }
 end
 
-local function sendBatch(batch, query, dec, fail, onCur)
-    if onCur and batch[1] then
-        local n = batch[1].name
-        if #batch > 1 then n = n .. " (+" .. (#batch - 1) .. ")" end
-        pcall(onCur, n)
-    end
-    if not requestFn then return end
-    local parts = table.create(#batch + 2)
-    parts[1] = "SQB1"
-    parts[2] = string.pack("<I4", #batch)
-    for i, e in batch do parts[i + 2] = string.pack("<s4s4", e.name, e.bytecode) end
-    local ok, res = pcall(requestFn, {
-        Url = BATCH_URL .. query, Method = "POST",
-        Headers = { ["content-type"] = "application/octet-stream" }, Body = table.concat(parts),
-    })
-    if not ok or not res or res.StatusCode ~= 200 then return end
-    local body = res.Body or ""
-    if #body < 8 or string.sub(body, 1, 4) ~= "SQR1" then return end
-    local parsed, results = pcall(function()
-        local count, at = string.unpack("<I4", body, 5)
-        if count ~= #batch then return nil end
-        local list = table.create(count)
-        for i = 1, count do
-            local flag, text
-            flag, text, at = string.unpack("<Bs4", body, at)
-            list[i] = { flag == 1, text }
-        end
-        return list
-    end)
-    if not parsed or not results then return end
-    for i, r in results do
-        local bc = batch[i].bytecode
-        if r[1] then
-            dec[bc] = r[2]
-        else
-            fail[bc] = "decompile: " .. (string.match(r[2], "^%-%-%s*([^\n]*)") or r[2])
-        end
-    end
-end
-
-local function decompAll(scripts, opts, onProgress)
-    local dec, fail = {}, {}
-    if #scripts == 0 then return dec, fail end
-    local width = 0
-    if opts then
-        local fmt = opts.Formatter
-        width = math.clamp(math.floor(fmt and fmt.IndentWidth or 0), 0, 255)
-    end
-    local query = "?indent_width=" .. width
-    local batches, batch, size = {}, {}, 0
-    for _, e in scripts do
-        if #batch > 0 and (#batch >= BATCH_SCRIPTS or size + #e.bytecode > BATCH_BYTES) then
-            batches[#batches+1] = batch
-            batch, size = {}, 0
-        end
-        batch[#batch+1] = e
-        size += #e.bytecode
-    end
-    batches[#batches+1] = batch
-    local nextB, running = 0, math.min(BATCHES_IN_FLIGHT, #batches)
-    local done = 0
-    for _ = 1, running do
-        task.spawn(function()
-            while true do
-                nextB += 1
-                local b = batches[nextB]
-                if not b then break end
-                local batchIdx = nextB
-                pcall(sendBatch, b, query, dec, fail, function(n)
-                    if onProgress then onProgress(batchIdx, #batches, n) end
-                end)
-                done += 1
-                if onProgress then onProgress(done, #batches, nil) end
-            end
-            running -= 1
-        end)
-    end
-    while running > 0 do task.wait() end
-    return dec, fail
+local function checkExecutor()
+    local hasWrite = type(writefile) == "function"
+    local hasFolder = type(makefolder) == "function"
+    local hasReq = type((getgenv().request or getgenv().http_request or (syn and syn.request) or http.request)) == "function"
+    
+    if not hasWrite then return false, "missing writefile" end
+    if not hasFolder then return false, "missing makefolder" end
+    if not hasReq then return false, "missing request" end
+    return true
 end
 
 local saveCount = 0
@@ -906,42 +746,69 @@ local function save(fname, root, options)
         error("Instance or {Instance} expected", 3)
     end
 
-    while current do task.wait() end
-    local state = { warnings = {}, disableLogs = vals.DisableLogs, decompilerOptions = vals.DecompileScripts and vals.DecompilerOptions or nil }
-    current = state
-
+    local state = { textureLoss = 0, textureQuality = vals.TextureQuality, disableLogs = vals.DisableLogs }
     local ui
     pcall(function() ui = makeUI() end)
 
-    local function upd(msg)
-        if ui then ui.set(msg) end
-        if not vals.DisableLogs then
-            print(msg)
+    local function upd(msg, isAnim)
+        if ui then
+            if isAnim then ui.animate(msg) else ui.set(msg) end
+        end
+        if not vals.DisableLogs and not isAnim then
+            print("[oreange decomp] " .. msg)
         end
     end
 
+    upd("loading")
+    
+    local execOk, execErr = checkExecutor()
+    if not execOk then
+        upd("failed: " .. execErr)
+        task.wait(3)
+        if ui then ui.kill() end
+        return
+    end
+
+    upd("checking excutor", true)
+    task.wait(1.5)
+
     upd("preparing")
-    if ui then ui.setUSSI("") end
+    if ui then ui.setUSSI("downloading ussi") end
 
     local ok, err = pcall(function()
-        upd("downloading ussi")
+        local okSrc, src = pcall(game.HttpGet, game, USSI_URL)
+        if not okSrc or type(src) ~= "string" or #src == 0 then error("could not download ussi") end
+        local chunk, compileErr = loadstring(src, "saveinstance")
+        if not chunk then error("could not compile ussi: " .. tostring(compileErr)) end
         
-        local ussi = getSaver()
+        local env = setmetatable({
+            writefile = writefile, readfile = readfile, isfile = isfile, isfolder = isfolder,
+            makefolder = makefolder, request = getgenv().request or getgenv().http_request or http.request,
+            getcustomasset = function(p) return p end, getnilinstances = getnilinstances or function() return {} end,
+            getgc = function() return {} end, cloneref = function(o) return o end,
+            gethui = function() return game:GetService("CoreGui") end, isreadonly = function() return false end,
+            setreadonly = function() end, hookfunction = function() end,
+            getrawmetatable = function(o) return getmetatable(o) end,
+            setrbxclipboard = getgenv().setrbxclipboard or function() end
+        }, { __index = getgenv() })
         
-        upd("ussi ready")
+        setfenv(chunk, env)
+        local ussi = chunk()
+        if type(ussi) ~= "function" then error("ussi did not return a function") end
         
+        if ui then ui.setUSSI("[oreange decomp]") end
+
         local path = targetPath(vals, root, isPlace)
         local base = path and (string.gsub(path, "%.[^/\\%.]+$", "")) or ("oreange decomp/Game")
         local meshDir = base .. "/meshes"
         local texDir = base .. "/textures"
 
-        local scripts, meshes, images = {}, {}, {}
-        if vals.DecompileScripts or vals.SaveMeshes or vals.SaveImages then
+        local meshes, images = {}, {}
+        if vals.SaveMeshes or vals.SaveImages then
             upd("scanning datamodel")
-            scripts, meshes, images = collect(isPlace, root, vals, function(i, n, name)
+            meshes, images = collect(isPlace, root, vals, function(i, n, name)
                 upd(string.format("scanning %s (%d/%d)", name, i, n))
             end)
-            upd(string.format("found %d scripts, %d meshes, %d textures", #scripts, #meshes, #images))
         end
 
         if vals.SaveMeshes and #meshes > 0 then
@@ -961,20 +828,14 @@ local function save(fname, root, options)
 
         if vals.SaveImages and #images > 0 then
             if #images > 500 then
-                WORKERS = 16
                 if ui then ui.showWarning() end
                 upd("way to many texutres, folder size will be large")
             end
             
             upd("extracting textures")
-            local rep = exportImages(images, texDir,
-                function(lossCount)
-                    if ui then ui.setLoss(lossCount) end
-                end,
-                function()
-                    if ui then ui.setRetry() end
-                end
-            )
+            local rep = exportImages(images, texDir, state, function()
+                if ui then ui.setLoss(state.textureLoss) end
+            end)
             local lastDone = -1
             while not rep.done do
                 local cur = rep.saved + rep.failed
@@ -987,19 +848,6 @@ local function save(fname, root, options)
             upd(string.format("textures done: %d ok, %d failed", rep.saved, rep.failed))
         end
 
-        if vals.DecompileScripts and #scripts > 0 then
-            upd(string.format("decompiling %d scripts", #scripts))
-            state.decompiled, state.failed = decompAll(scripts, state.decompilerOptions,
-                function(done, total, name)
-                    if name then
-                        upd(string.format("[%d/%d] %s", done, total, name))
-                    else
-                        upd(string.format("batch %d/%d done", done, total))
-                    end
-                end)
-            upd(string.format("decompiled %d scripts", #scripts))
-        end
-
         upd("serializing")
         if ui then ui.setUSSI("[oreange decomp V1.2]") end
 
@@ -1009,64 +857,36 @@ local function save(fname, root, options)
             saveCount += 1
             local internal = "oreange-save-" .. saveCount .. (isPlace and ".rbxl" or ".rbxm")
             local ussiOpts = {
-                Binary = true,
-                CompressionMode = (not vals.DisableCompression) and "zstd" or false,
-                Decompile = vals.DecompileScripts,
-                IgnoreNotArchivable = vals.IgnoreArchivable,
-                SavePlayerCharacters = vals.SavePlayerCharacters,
-                IsolatePlayers = vals.SavePlayers,
-                SaveNotCreatable = vals.SaveNonCreatable,
-                NilInstances = vals.SaveNilInstances,
-                IgnoreList = ignore,
-                FilePath = internal,
-                ShowStatus = false,
-                ReadMe = false,
-                SafeMode = false,
-                SaveMeshes = false,
-                DecompileTimeout = -1, BytecodeTimeout = -1,
-                scriptcache = false, CompressionLevel = 3,
+                Binary = true, CompressionMode = (not vals.DisableCompression) and "zstd" or false,
+                Decompile = false, IgnoreNotArchivable = vals.IgnoreArchivable,
+                SavePlayerCharacters = vals.SavePlayerCharacters, IsolatePlayers = vals.SavePlayers,
+                SaveNotCreatable = vals.SaveNonCreatable, NilInstances = vals.SaveNilInstances,
+                IgnoreList = ignore, FilePath = internal, ShowStatus = false, ReadMe = false,
+                SafeMode = false, SaveMeshes = false, scriptcache = false, CompressionLevel = 3,
                 Callback = function(ser) state.serialized = ser end,
             }
-            if isPlace then
-                ussi(ussiOpts)
-            else
-                ussiOpts.mode = "full"
-                ussi(root, ussiOpts)
-            end
+            if isPlace then ussi(ussiOpts) else ussiOpts.mode = "full"; ussi(root, ussiOpts) end
         end)
 
         if not okU then error(errU, 0) end
 
         local data = state.serialized
         local internal = "oreange-save-" .. saveCount .. (isPlace and ".rbxl" or ".rbxm")
-        if path ~= internal and delfileFn then pcall(function() delfileFn(internal) end) end
+        if path ~= internal and delfile then pcall(function() delfile(internal) end) end
 
-        if type(data) ~= "string" then
-            local reason
-            for i, msg in state.warnings do
-                if string.find(msg, "Error found while saving", 1, true) then
-                    reason = state.warnings[i + 1]
-                    break
-                end
-            end
-            if not reason and #state.warnings > 0 then
-                reason = table.concat(state.warnings, " | ", math.max(1, #state.warnings - 2))
-            end
-            error(reason or "nothing was serialized", 0)
-        end
+        if type(data) ~= "string" then error("nothing was serialized", 0) end
 
         upd("writing file")
-        if vals.CopyToClipboard and setclip then pcall(setclip, data) end
+        if vals.CopyToClipboard and setrbxclipboard then pcall(setrbxclipboard, data) end
         if path then
             mkParents(path)
             local okW, werr = pcall(writefile, path, data)
             if not okW then error("writefile failed: " .. tostring(werr), 0) end
         end
 
-        upd("saved -> " .. (path or "(clipboard)"))
+        upd("saved:" .. (path or "(clipboard)"))
     end)
 
-    current = nil
     if not ok then
         if ui then
             ui.set("failed: " .. tostring(err))
