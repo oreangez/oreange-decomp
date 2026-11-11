@@ -669,10 +669,11 @@ local function makeUI()
     lossLbl.Size = UDim2.new(1, 0, 0, 16)
     lossLbl.Font = Enum.Font.Code
     lossLbl.TextSize = 14
-    lossLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    lossLbl.TextColor3 = Color3.fromRGB(255, 165, 0)
     lossLbl.TextXAlignment = Enum.TextXAlignment.Right
     lossLbl.Text = "textures loss: 0"
     lossLbl.LayoutOrder = 3
+    lossLbl.Visible = false
     lossLbl.Parent = container
 
     local warnLbl = Instance.new("TextLabel")
@@ -703,13 +704,21 @@ local function makeUI()
         setUSSI = function(t)
             if ussiLbl and ussiLbl.Parent then ussiLbl.Text = tostring(t) end
         end,
-        set = function(t) 
-            if statusLbl and statusLbl.Parent then statusLbl.Text = "[oreange decomp] " .. tostring(t) end 
+        set = function(t, color) 
+            if statusLbl and statusLbl.Parent then 
+                statusLbl.Text = "[oreange decomp] " .. tostring(t) 
+                statusLbl.TextColor3 = color or Color3.fromRGB(255, 255, 255)
+            end 
         end,
         animate = animateDots,
         setLoss = function(count)
             if lossLbl and lossLbl.Parent then
                 lossLbl.Text = "textures loss: " .. tostring(count)
+            end
+        end,
+        showLoss = function(show)
+            if lossLbl and lossLbl.Parent then
+                lossLbl.Visible = show
             end
         end,
         showWarning = function()
@@ -754,9 +763,9 @@ local function save(fname, root, options)
     local ui
     pcall(function() ui = makeUI() end)
 
-    local function upd(msg, isAnim)
+    local function upd(msg, isAnim, color)
         if ui then
-            if isAnim then ui.animate(msg) else ui.set(msg) end
+            if isAnim then ui.animate(msg) else ui.set(msg, color) end
         end
         if not vals.DisableLogs and not isAnim then
             print("[oreange decomp] " .. msg)
@@ -776,8 +785,8 @@ local function save(fname, root, options)
     upd("checking excutor", true)
     task.wait(1.5)
 
-    upd("preparing")
-    if ui then ui.setUSSI("downloading ussi") end
+    if ui then ui.setUSSI("[oreange decomp v1.4]") end
+    upd("preparing", false, Color3.fromRGB(255, 200, 100))
 
     local ok, err = pcall(function()
         local okSrc, src = pcall(game.HttpGet, game, USSI_URL)
@@ -799,8 +808,6 @@ local function save(fname, root, options)
         setfenv(chunk, env)
         local ussi = chunk()
         if type(ussi) ~= "function" then error("ussi did not return a function") end
-        
-        if ui then ui.setUSSI("[oreange decomp]") end
 
         local path = targetPath(vals, root, isPlace)
         local base = path and (string.gsub(path, "%.[^/\\%.]+$", "")) or ("oreange decomp/Game")
@@ -836,6 +843,7 @@ local function save(fname, root, options)
                 upd("way to many texutres, folder size will be large")
             end
             
+            if ui then ui.showLoss(true) end
             upd("extracting textures")
             local rep = exportImages(images, texDir, state, function()
                 if ui then ui.setLoss(state.textureLoss) end
@@ -849,11 +857,11 @@ local function save(fname, root, options)
                 end
                 task.wait(0.1)
             end
+            if ui then ui.showLoss(false) end
             upd(string.format("textures done: %d ok, %d failed", rep.saved, rep.failed))
         end
 
         upd("serializing")
-        if ui then ui.setUSSI("[oreange decomp V1.2]") end
 
         local okU, errU = pcall(function()
             local ignore = { "CoreGui", "CorePackages", Packages = false }
