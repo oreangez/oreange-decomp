@@ -1,3 +1,7 @@
+--Usage of AI is prohibited using this script. 
+--If you fork/update this script, please make sure to credit me!
+--Found bugs? contact @oreangez on discord
+
 local cmd, a, b = ...
 
 local USSI_URL = "https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau"
@@ -884,7 +888,7 @@ local function save(fname, root, options)
             if not okW then error("writefile failed: " .. tostring(werr), 0) end
         end
 
-        upd("saved:" .. (path or "(clipboard)"))
+        upd("saved: " .. (path or "(clipboard)"))
     end)
 
     if not ok then
