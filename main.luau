@@ -475,7 +475,7 @@ local function exportImages(entries, dir, state, updateUI)
         if not img then
             rep.failed += 1
             state.textureLoss += 1
-            pcall(updateUI)
+            pcall(updateUI, state.textureLoss)
             rep.reason = rep.reason or reason or "unknown"
             return
         end
@@ -647,7 +647,7 @@ local function makeUI()
     ussiLbl.TextSize = 14
     ussiLbl.TextColor3 = Color3.fromRGB(255, 200, 100)
     ussiLbl.TextXAlignment = Enum.TextXAlignment.Right
-    ussiLbl.Text = ""
+    ussiLbl.Text = "[oreange decomp v1.4]"
     ussiLbl.LayoutOrder = 1
     ussiLbl.Parent = container
 
@@ -689,13 +689,27 @@ local function makeUI()
     warnLbl.Visible = false
     warnLbl.Parent = container
 
-    local function animateDots(baseText)
-        task.spawn(function()
-            local dots = 1
-            while statusLbl.Text:find(baseText) do
-                statusLbl.Text = "[oreange decomp] " .. baseText .. string.rep(".", dots)
-                dots = dots % 3 + 1
-                task.wait(0.4)
+    local IsLoading = false
+    local LoadingText = ""
+    local LoadingThread = nil
+    local StatusText = statusLbl
+
+    local function ensureSpinner()
+        if LoadingThread then return end
+        LoadingThread = task.spawn(function()
+            local chars = { "|", "/", "-", "\\" }
+            local i = 0
+            while true do
+                while not IsLoading do
+                    task.wait()
+                end
+                while IsLoading do
+                    i = i % #chars + 1
+                    if StatusText and LoadingText then
+                        StatusText.Text = "[oreange decomp] " .. LoadingText .. " " .. chars[i]
+                    end
+                    task.wait(0.25)
+                end
             end
         end)
     end
@@ -705,20 +719,23 @@ local function makeUI()
             if ussiLbl and ussiLbl.Parent then ussiLbl.Text = tostring(t) end
         end,
         set = function(t, color) 
+            IsLoading = false
             if statusLbl and statusLbl.Parent then 
                 statusLbl.Text = "[oreange decomp] " .. tostring(t) 
                 statusLbl.TextColor3 = color or Color3.fromRGB(255, 255, 255)
             end 
         end,
-        animate = animateDots,
+        startLoading = function(t)
+            LoadingText = t
+            IsLoading = true
+            ensureSpinner()
+        end,
         setLoss = function(count)
             if lossLbl and lossLbl.Parent then
                 lossLbl.Text = "textures loss: " .. tostring(count)
-            end
-        end,
-        showLoss = function(show)
-            if lossLbl and lossLbl.Parent then
-                lossLbl.Visible = show
+                if count > 0 then
+                    lossLbl.Visible = true
+                end
             end
         end,
         showWarning = function()
@@ -763,32 +780,83 @@ local function save(fname, root, options)
     local ui
     pcall(function() ui = makeUI() end)
 
-    local function upd(msg, isAnim, color)
-        if ui then
-            if isAnim then ui.animate(msg) else ui.set(msg, color) end
-        end
-        if not vals.DisableLogs and not isAnim then
+    local function upd(msg, color)
+        if ui then ui.set(msg, color) end
+        if not vals.DisableLogs then
             print("[oreange decomp] " .. msg)
         end
     end
 
-    upd("loading")
+    upd("loading..", Color3.fromRGB(255, 200, 100))
+    task.wait(3)
+    
+    upd("checking executor...", Color3.fromRGB(255, 255, 255))
     
     local execOk, execErr = checkExecutor()
     if not execOk then
-        upd("failed: " .. execErr)
+        upd("failed: " .. execErr, Color3.fromRGB(255, 100, 100))
         task.wait(3)
         if ui then ui.kill() end
         return
     end
+    task.wait(1)
 
-    upd("checking excutor", true)
-    task.wait(1.5)
-
-    if ui then ui.setUSSI("[oreange decomp v1.4]") end
-    upd("preparing", false, Color3.fromRGB(255, 200, 100))
+    upd("reading game...", Color3.fromRGB(255, 255, 255))
 
     local ok, err = pcall(function()
+        local path = targetPath(vals, root, isPlace)
+        local base = path and (string.gsub(path, "%.[^/\\%.]+$", "")) or ("oreange decomp/Game")
+        local meshDir = base .. "/meshes"
+        local texDir = base .. "/textures"
+
+        local meshes, images = {}, {}
+        if vals.SaveMeshes or vals.SaveImages then
+            meshes, images = collect(isPlace, root, vals, function(i, n, name)
+                upd(string.format("scanning %s (%d/%d)", name, i, n), Color3.fromRGB(255, 255, 255))
+            end)
+        end
+
+        if vals.SaveMeshes and #meshes > 0 then
+            upd("extracting meshes...", Color3.fromRGB(255, 255, 255))
+            local rep = exportMeshes(meshes, meshDir)
+            local lastDone = -1
+            while not rep.done do
+                local cur = rep.saved + rep.failed
+                if cur ~= lastDone then
+                    lastDone = cur
+                    upd(string.format("meshes %d/%d", cur, #meshes), Color3.fromRGB(255, 255, 255))
+                end
+                task.wait(0.1)
+            end
+            upd("meshes extracted successfully", Color3.fromRGB(0, 255, 0))
+            task.wait(1.5)
+        end
+
+        if vals.SaveImages and #images > 0 then
+            if #images > 500 then
+                if ui then ui.showWarning() end
+                upd("way to many texutres, folder size will be large", Color3.fromRGB(255, 255, 255))
+            end
+            
+            upd("starting texture decomp...", Color3.fromRGB(255, 255, 255))
+            local rep = exportImages(images, texDir, state, function(lossCount)
+                if ui then ui.setLoss(lossCount) end
+            end)
+            local lastDone = -1
+            while not rep.done do
+                local cur = rep.saved + rep.failed
+                if cur ~= lastDone then
+                    lastDone = cur
+                    upd(string.format("textures %d/%d", cur, #images), Color3.fromRGB(255, 255, 255))
+                end
+                task.wait(0.1)
+            end
+            upd(string.format("textures done: %d ok, %d failed", rep.saved, rep.failed), Color3.fromRGB(255, 255, 255))
+        end
+
+        if ui then ui.startLoading("saving game...") end
+        if not vals.DisableLogs then print("[oreange decomp] saving game...") end
+
         local okSrc, src = pcall(game.HttpGet, game, USSI_URL)
         if not okSrc or type(src) ~= "string" or #src == 0 then error("could not download ussi") end
         local chunk, compileErr = loadstring(src, "saveinstance")
@@ -809,60 +877,6 @@ local function save(fname, root, options)
         local ussi = chunk()
         if type(ussi) ~= "function" then error("ussi did not return a function") end
 
-        local path = targetPath(vals, root, isPlace)
-        local base = path and (string.gsub(path, "%.[^/\\%.]+$", "")) or ("oreange decomp/Game")
-        local meshDir = base .. "/meshes"
-        local texDir = base .. "/textures"
-
-        local meshes, images = {}, {}
-        if vals.SaveMeshes or vals.SaveImages then
-            upd("scanning datamodel")
-            meshes, images = collect(isPlace, root, vals, function(i, n, name)
-                upd(string.format("scanning %s (%d/%d)", name, i, n))
-            end)
-        end
-
-        if vals.SaveMeshes and #meshes > 0 then
-            upd("extracting meshes")
-            local rep = exportMeshes(meshes, meshDir)
-            local lastDone = -1
-            while not rep.done do
-                local cur = rep.saved + rep.failed
-                if cur ~= lastDone then
-                    lastDone = cur
-                    upd(string.format("meshes %d/%d", cur, #meshes))
-                end
-                task.wait(0.1)
-            end
-            upd(string.format("meshes done: %d ok, %d failed", rep.saved, rep.failed))
-        end
-
-        if vals.SaveImages and #images > 0 then
-            if #images > 500 then
-                if ui then ui.showWarning() end
-                upd("way to many texutres, folder size will be large")
-            end
-            
-            if ui then ui.showLoss(true) end
-            upd("extracting textures")
-            local rep = exportImages(images, texDir, state, function()
-                if ui then ui.setLoss(state.textureLoss) end
-            end)
-            local lastDone = -1
-            while not rep.done do
-                local cur = rep.saved + rep.failed
-                if cur ~= lastDone then
-                    lastDone = cur
-                    upd(string.format("textures %d/%d", cur, #images))
-                end
-                task.wait(0.1)
-            end
-            if ui then ui.showLoss(false) end
-            upd(string.format("textures done: %d ok, %d failed", rep.saved, rep.failed))
-        end
-
-        upd("serializing")
-
         local okU, errU = pcall(function()
             local ignore = { "CoreGui", "CorePackages", Packages = false }
             for _, item in vals.IgnoreList do table.insert(ignore, item) end
@@ -880,6 +894,11 @@ local function save(fname, root, options)
             if isPlace then ussi(ussiOpts) else ussiOpts.mode = "full"; ussi(root, ussiOpts) end
         end)
 
+        if genv.USSI_statustext then
+            genv.USSI_statustext:Destroy()
+            genv.USSI_statustext = nil
+        end
+
         if not okU then error(errU, 0) end
 
         local data = state.serialized
@@ -888,7 +907,6 @@ local function save(fname, root, options)
 
         if type(data) ~= "string" then error("nothing was serialized", 0) end
 
-        upd("writing file")
         if vals.CopyToClipboard and setrbxclipboard then pcall(setrbxclipboard, data) end
         if path then
             mkParents(path)
@@ -896,20 +914,22 @@ local function save(fname, root, options)
             if not okW then error("writefile failed: " .. tostring(werr), 0) end
         end
 
-        upd("saved: " .. (path or "(clipboard)"))
+        upd("saved: " .. (path or "(clipboard)"), Color3.fromRGB(0, 255, 0))
     end)
 
     if not ok then
         if ui then
-            ui.set("failed: " .. tostring(err))
+            ui.set("failed: " .. tostring(err), Color3.fromRGB(255, 100, 100))
             task.delay(4, function() if ui then ui.kill() end end)
         end
         if not vals.DisableLogs then
             error(fname .. " failed: " .. tostring(err), 3)
         end
     else
-        if ui then ui.setUSSI("oreange decomp finished") end
-        task.delay(3, function() if ui then ui.kill() end end)
+        if ui then 
+            ui.setUSSI("oreange decomp finished") 
+            task.delay(3, function() if ui then ui.kill() end end)
+        end
     end
 end
 
