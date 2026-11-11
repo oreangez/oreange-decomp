@@ -180,12 +180,33 @@ local function sanitize(name)
     return clean
 end
 
+local function getGameName(placeId)
+    local ok, name = pcall(function()
+        local info = game:GetService("MarketplaceService"):GetProductInfo(placeId, Enum.InfoType.Asset)
+        return info.Name
+    end)
+    if ok and name and name ~= "" and name ~= "Place" then
+        return name
+    end
+    local http = game:GetService("HttpService")
+    local url = "https://games.roblox.com/v1/games/multiget-place-details?placeIds=" .. tostring(placeId)
+    local ok2, response = pcall(function() return http:GetAsync(url) end)
+    if ok2 and response then
+        local ok3, data = pcall(function() return http:JSONDecode(response) end)
+        if ok3 and data and data[1] and data[1].name then
+            return data[1].name
+        end
+    end
+    return nil
+end
+
 local function genPath(root, isModel)
     local baseName = ""
     if isModel and root and root.Name then
         baseName = root.Name
     else
-        baseName = game.Name
+        local gameName = getGameName(game.PlaceId)
+        baseName = gameName or game.Name
     end
     baseName = sanitize(baseName)
     
@@ -704,9 +725,6 @@ local function makeUI()
         setUSSI = function(t)
             if ussiLbl and ussiLbl.Parent then
                 ussiLbl.Text = "[oreange decomp] " .. tostring(t)
-                if t:lower():find("ready") then
-                    task.delay(3, function() if ussiLbl and ussiLbl.Parent then ussiLbl.Text = "" end end)
-                end
             end
         end,
         set = function(t) if statusLbl and statusLbl.Parent then statusLbl.Text = "[oreange decomp] " .. tostring(t) end end,
@@ -830,12 +848,12 @@ local function save(fname, root, options)
     upd("preparing")
 
     local ok, err = pcall(function()
-        if ui then ui.setUSSI("downloading ussi") end
+        if ui then ui.setUSSI("oreange running ussi") end
         upd("downloading ussi")
         
         local ussi = getSaver()
         
-        if ui then ui.setUSSI("ussi ready") end
+        if ui then ui.setUSSI("oreange running ussi") end
         upd("ussi ready")
         
         local path = targetPath(vals, root, isPlace)
@@ -968,6 +986,7 @@ local function save(fname, root, options)
         end
         error(fname .. " failed: " .. tostring(err), 3)
     else
+        if ui then ui.setUSSI("oreange decomp finished") end
         task.delay(3, function() if ui then ui.kill() end end)
     end
 end
