@@ -6,6 +6,7 @@ local cmd, a, b = ...
 
 local USSI_URL = "https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau"
 local genv = (type(getgenv) == "function" and getgenv()) or getfenv(0)
+local TweenService = game:GetService("TweenService")
 
 local OPTIONS = {
     FilePath = "string", IgnoreArchivable = "boolean", SavePlayerCharacters = "boolean",
@@ -633,22 +634,17 @@ local function makeUI()
     container.BackgroundTransparency = 1
     container.Parent = gui
 
-    local uil = Instance.new("UIListLayout")
-    uil.Parent = container
-    uil.HorizontalAlignment = Enum.HorizontalAlignment.Right
-    uil.SortOrder = Enum.SortOrder.LayoutOrder
-    uil.Padding = UDim.new(0, 2)
-
     local ussiLbl = Instance.new("TextLabel")
     ussiLbl.Name = "USSI"
     ussiLbl.BackgroundTransparency = 1
     ussiLbl.Size = UDim2.new(1, 0, 0, 16)
     ussiLbl.Font = Enum.Font.Code
     ussiLbl.TextSize = 14
-    ussiLbl.TextColor3 = Color3.fromRGB(255, 200, 100)
+    ussiLbl.TextColor3 = Color3.fromRGB(255, 165, 0)
     ussiLbl.TextXAlignment = Enum.TextXAlignment.Right
     ussiLbl.Text = "[oreange decomp v1.4]"
-    ussiLbl.LayoutOrder = 1
+    ussiLbl.Position = UDim2.new(1, 500, 0, 0)
+    ussiLbl.TextTransparency = 1
     ussiLbl.Parent = container
 
     local statusLbl = Instance.new("TextLabel")
@@ -659,8 +655,9 @@ local function makeUI()
     statusLbl.TextSize = 14
     statusLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
     statusLbl.TextXAlignment = Enum.TextXAlignment.Right
-    statusLbl.Text = "[oreange decomp] loading"
-    statusLbl.LayoutOrder = 2
+    statusLbl.Text = "loading"
+    statusLbl.Position = UDim2.new(1, 500, 0, 18)
+    statusLbl.TextTransparency = 1
     statusLbl.Parent = container
 
     local lossLbl = Instance.new("TextLabel")
@@ -669,10 +666,11 @@ local function makeUI()
     lossLbl.Size = UDim2.new(1, 0, 0, 16)
     lossLbl.Font = Enum.Font.Code
     lossLbl.TextSize = 14
-    lossLbl.TextColor3 = Color3.fromRGB(255, 165, 0)
+    lossLbl.TextColor3 = Color3.fromRGB(255, 50, 50)
     lossLbl.TextXAlignment = Enum.TextXAlignment.Right
     lossLbl.Text = "textures loss: 0"
-    lossLbl.LayoutOrder = 3
+    lossLbl.Position = UDim2.new(1, 500, 0, 36)
+    lossLbl.TextTransparency = 1
     lossLbl.Visible = false
     lossLbl.Parent = container
 
@@ -685,7 +683,8 @@ local function makeUI()
     warnLbl.TextColor3 = Color3.fromRGB(255, 100, 100)
     warnLbl.TextXAlignment = Enum.TextXAlignment.Right
     warnLbl.Text = "way to many texutres, folder size will be large"
-    warnLbl.LayoutOrder = 4
+    warnLbl.Position = UDim2.new(1, 500, 0, 54)
+    warnLbl.TextTransparency = 1
     warnLbl.Visible = false
     warnLbl.Parent = container
 
@@ -706,13 +705,32 @@ local function makeUI()
                 while IsLoading do
                     i = i % #chars + 1
                     if StatusText and LoadingText then
-                        StatusText.Text = "[oreange decomp] " .. LoadingText .. " " .. chars[i]
+                        StatusText.Text = LoadingText .. " " .. chars[i]
                     end
                     task.wait(0.25)
                 end
             end
         end)
     end
+
+    local function slideInLabel(lbl, targetY, delay)
+        task.spawn(function()
+            task.wait(delay)
+            local tweenInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+            local goal = {
+                Position = UDim2.new(1, 0, 0, targetY),
+                TextTransparency = 0
+            }
+            TweenService:Create(lbl, tweenInfo, goal):Play()
+        end)
+    end
+
+    task.spawn(function()
+        slideInLabel(ussiLbl, 0, 0)
+        slideInLabel(statusLbl, 18, 0.1)
+        slideInLabel(lossLbl, 36, 0.2)
+        slideInLabel(warnLbl, 54, 0.3)
+    end)
 
     return {
         setUSSI = function(t)
@@ -721,14 +739,18 @@ local function makeUI()
         set = function(t, color) 
             IsLoading = false
             if statusLbl and statusLbl.Parent then 
-                statusLbl.Text = "[oreange decomp] " .. tostring(t) 
+                statusLbl.Text = tostring(t) 
                 statusLbl.TextColor3 = color or Color3.fromRGB(255, 255, 255)
             end 
         end,
-        startLoading = function(t)
+        startLoading = function(t, color)
             LoadingText = t
+            if statusLbl then statusLbl.TextColor3 = color or Color3.fromRGB(255, 255, 255) end
             IsLoading = true
             ensureSpinner()
+        end,
+        setLoadingText = function(t)
+            LoadingText = t
         end,
         setLoss = function(count)
             if lossLbl and lossLbl.Parent then
@@ -741,7 +763,16 @@ local function makeUI()
         showWarning = function()
             if warnLbl and warnLbl.Parent then warnLbl.Visible = true end
         end,
-        kill = function() pcall(function() gui:Destroy() end) end,
+        kill = function() 
+            local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Linear)
+            TweenService:Create(ussiLbl, tweenInfo, {TextTransparency = 1}):Play()
+            TweenService:Create(statusLbl, tweenInfo, {TextTransparency = 1}):Play()
+            TweenService:Create(lossLbl, tweenInfo, {TextTransparency = 1}):Play()
+            TweenService:Create(warnLbl, tweenInfo, {TextTransparency = 1}):Play()
+            task.delay(0.35, function() 
+                pcall(function() gui:Destroy() end) 
+            end)
+        end,
     }
 end
 
@@ -783,18 +814,18 @@ local function save(fname, root, options)
     local function upd(msg, color)
         if ui then ui.set(msg, color) end
         if not vals.DisableLogs then
-            print("[oreange decomp] " .. msg)
+            print(msg)
         end
     end
 
-    upd("loading..", Color3.fromRGB(255, 200, 100))
+    upd("loading..", Color3.fromRGB(255, 165, 0))
     task.wait(3)
     
     upd("checking executor...", Color3.fromRGB(255, 255, 255))
     
     local execOk, execErr = checkExecutor()
     if not execOk then
-        upd("failed: " .. execErr, Color3.fromRGB(255, 100, 100))
+        upd("failed: " .. execErr, Color3.fromRGB(255, 50, 50))
         task.wait(3)
         if ui then ui.kill() end
         return
@@ -817,14 +848,14 @@ local function save(fname, root, options)
         end
 
         if vals.SaveMeshes and #meshes > 0 then
-            upd("extracting meshes...", Color3.fromRGB(255, 255, 255))
+            if ui then ui.startLoading("decompiling meshes", Color3.fromRGB(255, 255, 255)) end
             local rep = exportMeshes(meshes, meshDir)
             local lastDone = -1
             while not rep.done do
                 local cur = rep.saved + rep.failed
                 if cur ~= lastDone then
                     lastDone = cur
-                    upd(string.format("meshes %d/%d", cur, #meshes), Color3.fromRGB(255, 255, 255))
+                    if ui then ui.setLoadingText(string.format("decompiling meshes %d/%d", cur, #meshes)) end
                 end
                 task.wait(0.1)
             end
@@ -838,7 +869,7 @@ local function save(fname, root, options)
                 upd("way to many texutres, folder size will be large", Color3.fromRGB(255, 255, 255))
             end
             
-            upd("starting texture decomp...", Color3.fromRGB(255, 255, 255))
+            if ui then ui.startLoading("decompiling textures", Color3.fromRGB(255, 255, 255)) end
             local rep = exportImages(images, texDir, state, function(lossCount)
                 if ui then ui.setLoss(lossCount) end
             end)
@@ -847,15 +878,15 @@ local function save(fname, root, options)
                 local cur = rep.saved + rep.failed
                 if cur ~= lastDone then
                     lastDone = cur
-                    upd(string.format("textures %d/%d", cur, #images), Color3.fromRGB(255, 255, 255))
+                    if ui then ui.setLoadingText(string.format("decompiling textures %d/%d", cur, #images)) end
                 end
                 task.wait(0.1)
             end
             upd(string.format("textures done: %d ok, %d failed", rep.saved, rep.failed), Color3.fromRGB(255, 255, 255))
         end
 
-        if ui then ui.startLoading("saving game...") end
-        if not vals.DisableLogs then print("[oreange decomp] saving game...") end
+        if ui then ui.startLoading("saving game...", Color3.fromRGB(255, 255, 255)) end
+        if not vals.DisableLogs then print("saving game...") end
 
         local okSrc, src = pcall(game.HttpGet, game, USSI_URL)
         if not okSrc or type(src) ~= "string" or #src == 0 then error("could not download ussi") end
@@ -919,7 +950,7 @@ local function save(fname, root, options)
 
     if not ok then
         if ui then
-            ui.set("failed: " .. tostring(err), Color3.fromRGB(255, 100, 100))
+            ui.set("failed: " .. tostring(err), Color3.fromRGB(255, 50, 50))
             task.delay(4, function() if ui then ui.kill() end end)
         end
         if not vals.DisableLogs then
