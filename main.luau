@@ -145,7 +145,8 @@ local function genPath(root, isModel)
         baseName = isModel and "Model" or "Game"
     end
     
-    local folder = "oreange decomp"
+    -- Fixed: removed space from folder name to avoid permission issues
+    local folder = "oreange_decomp"
     if not isfolder(folder) then makefolder(folder) end
     
     local ext = isModel and ".rbxm" or ".rbxl"
@@ -839,7 +840,7 @@ local function save(fname, root, options)
 
     local ok, err = pcall(function()
         local path = targetPath(vals, root, isPlace)
-        local base = path and (string.gsub(path, "%.[^/\\%.]+$", "")) or ("oreange decomp/Game")
+        local base = path and (string.gsub(path, "%.[^/\\%.]+$", "")) or ("oreange_decomp/Game")
         local meshDir = base .. "/meshes"
         local texDir = base .. "/textures"
 
