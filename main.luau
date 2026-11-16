@@ -416,6 +416,38 @@ local function loadImg(svc, url)
     return nil, lastErr
 end
 
+-- NEW: actually apply the local-asset patches to the live instances so the
+-- serialized place references rbxasset:// paths instead of rbxassetid://
+local function applyPatches(patches)
+    local applied = {}
+    for _, patch in patches do
+        local inst = patch.instance
+        if typeof(inst) == "Instance" and patch.prop and patch.customURL then
+            local okOld, old = pcall(function() return inst[patch.prop] end)
+            local okSet = pcall(function() inst[patch.prop] = patch.customURL end)
+            if okSet then
+                applied[#applied+1] = {
+                    instance = inst,
+                    prop = patch.prop,
+                    old = okOld and old or nil,
+                    hadOld = okOld,
+                }
+            end
+        end
+    end
+    return applied
+end
+
+-- NEW: restore the original property values after the place is serialized
+local function revertPatches(applied)
+    if not applied then return end
+    for _, p in applied do
+        if p.hadOld then
+            pcall(function() p.instance[p.prop] = p.old end)
+        end
+    end
+end
+
 local function exportMeshes(entries, dir)
     local rep = { saved = 0, failed = 0, reason = nil, patches = {}, done = false }
     if #entries == 0 then rep.done = true; return rep end
@@ -838,6 +870,9 @@ local function save(fname, root, options)
 
     upd("reading game...", Color3.fromRGB(255, 255, 255))
 
+    -- patches are applied right before serialization and reverted afterwards
+    local appliedPatches = nil
+
     local ok, err = pcall(function()
         local path = targetPath(vals, root, isPlace)
         local base = path and (string.gsub(path, "%.[^/\\%.]+$", "")) or ("oreange_decomp/Game")
@@ -851,6 +886,9 @@ local function save(fname, root, options)
             end)
         end
 
+        -- fix: gather every patch produced by the exporters
+        local patches = {}
+
         if vals.SaveMeshes and #meshes > 0 then
             if ui then ui.startLoading("decompiling meshes", Color3.fromRGB(255, 255, 255)) end
             local rep = exportMeshes(meshes, meshDir)
@@ -863,6 +901,7 @@ local function save(fname, root, options)
                 end
                 task.wait(0.1)
             end
+            for _, p in rep.patches do patches[#patches+1] = p end
             upd("meshes extracted successfully", Color3.fromRGB(0, 255, 0))
             task.wait(1.5)
         end
@@ -886,7 +925,16 @@ local function save(fname, root, options)
                 end
                 task.wait(0.1)
             end
+            for _, p in rep.patches do patches[#patches+1] = p end
             upd(string.format("textures done: %d ok, %d failed", rep.saved, rep.failed), Color3.fromRGB(255, 255, 255))
+        end
+
+        -- fix: point the instances at the extracted files before USSI serializes
+        if #patches > 0 then
+            if ui then ui.startLoading("linking local assets", Color3.fromRGB(255, 255, 255)) end
+            appliedPatches = applyPatches(patches)
+            upd(string.format("linked %d local assets", #appliedPatches), Color3.fromRGB(0, 255, 0))
+            task.wait(0.5)
         end
 
         if ui then ui.startLoading("saving game...", Color3.fromRGB(255, 255, 255)) end
@@ -951,6 +999,9 @@ local function save(fname, root, options)
 
         upd("saved: " .. (path or "(clipboard)"), Color3.fromRGB(0, 255, 0))
     end)
+
+    -- fix: always restore the original asset ids, even if serialization failed
+    revertPatches(appliedPatches)
 
     if not ok then
         if ui then
