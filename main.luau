@@ -145,7 +145,6 @@ local function genPath(root, isModel)
         baseName = isModel and "Model" or "Game"
     end
     
-    -- Fixed: removed space from folder name to avoid permission issues
     local folder = "oreange_decomp"
     if not isfolder(folder) then makefolder(folder) end
     
@@ -416,13 +415,26 @@ local function loadImg(svc, url)
     return nil, lastErr
 end
 
--- NEW: actually apply the local-asset patches to the live instances so the
--- serialized place references rbxasset:// paths instead of rbxassetid://
+-- NEW: apply local-asset patches to the live instances so USSI serializes
+-- rbxasset:// paths instead of rbxassetid://. Never touches read-only props
+-- like MeshPart.MeshId (NotScriptable) and pcall's every write so a single
+-- bad instance can never abort the whole save.
+local PATCH_BLACKLIST = {
+    MeshPart_MeshId = true,
+}
+
+local function isPatchable(inst, prop)
+    if prop == "MeshId" and inst.ClassName == "MeshPart" then return false end
+    return true
+end
+
 local function applyPatches(patches)
     local applied = {}
+    local skipped = 0
     for _, patch in patches do
         local inst = patch.instance
-        if typeof(inst) == "Instance" and patch.prop and patch.customURL then
+        if typeof(inst) == "Instance" and inst.Parent ~= nil
+            and patch.prop and patch.customURL and isPatchable(inst, patch.prop) then
             local okOld, old = pcall(function() return inst[patch.prop] end)
             local okSet = pcall(function() inst[patch.prop] = patch.customURL end)
             if okSet then
@@ -432,18 +444,25 @@ local function applyPatches(patches)
                     old = okOld and old or nil,
                     hadOld = okOld,
                 }
+            else
+                skipped += 1
             end
+        else
+            skipped += 1
         end
     end
-    return applied
+    return applied, skipped
 end
 
--- NEW: restore the original property values after the place is serialized
 local function revertPatches(applied)
     if not applied then return end
     for _, p in applied do
         if p.hadOld then
-            pcall(function() p.instance[p.prop] = p.old end)
+            pcall(function()
+                if p.instance and p.instance.Parent ~= nil then
+                    p.instance[p.prop] = p.old
+                end
+            end)
         end
     end
 end
@@ -469,7 +488,11 @@ local function exportMeshes(entries, dir)
         rep.saved += 1
         local patchUrl = "rbxasset://meshes/" .. name
         for _, inst in entry.instances do
-            table.insert(rep.patches, { instance = inst, prop = "MeshId", customURL = patchUrl })
+            -- MeshPart.MeshId is read-only at runtime — skip it so we don't
+            -- blow up the save. SpecialMesh.MeshId is writable and gets patched.
+            if not (inst.ClassName == "MeshPart") then
+                table.insert(rep.patches, { instance = inst, prop = "MeshId", customURL = patchUrl })
+            end
         end
     end
     for _ = 1, running do
@@ -850,7 +873,7 @@ local function save(fname, root, options)
     local function upd(msg, color)
         if ui then ui.set(msg, color) end
         if not vals.DisableLogs then
-            print(msg)
+            print("[oreange] " .. tostring(msg))
         end
     end
 
@@ -870,7 +893,6 @@ local function save(fname, root, options)
 
     upd("reading game...", Color3.fromRGB(255, 255, 255))
 
-    -- patches are applied right before serialization and reverted afterwards
     local appliedPatches = nil
 
     local ok, err = pcall(function()
@@ -886,7 +908,7 @@ local function save(fname, root, options)
             end)
         end
 
-        -- fix: gather every patch produced by the exporters
+        -- gather every patch produced by the exporters
         local patches = {}
 
         if vals.SaveMeshes and #meshes > 0 then
@@ -929,11 +951,17 @@ local function save(fname, root, options)
             upd(string.format("textures done: %d ok, %d failed", rep.saved, rep.failed), Color3.fromRGB(255, 255, 255))
         end
 
-        -- fix: point the instances at the extracted files before USSI serializes
+        -- FIX: apply patches inside pcall so a single bad write can never
+        -- abort the save before USSI runs.
         if #patches > 0 then
             if ui then ui.startLoading("linking local assets", Color3.fromRGB(255, 255, 255)) end
-            appliedPatches = applyPatches(patches)
-            upd(string.format("linked %d local assets", #appliedPatches), Color3.fromRGB(0, 255, 0))
+            local okPatch, appliedOrErr, skipped = pcall(applyPatches, patches)
+            if okPatch then
+                appliedPatches = appliedOrErr
+                upd(string.format("linked %d local assets (skipped %d)", #appliedPatches, skipped or 0), Color3.fromRGB(0, 255, 0))
+            else
+                upd("patch apply failed: " .. tostring(appliedOrErr), Color3.fromRGB(255, 50, 50))
+            end
             task.wait(0.5)
         end
 
@@ -1000,8 +1028,8 @@ local function save(fname, root, options)
         upd("saved: " .. (path or "(clipboard)"), Color3.fromRGB(0, 255, 0))
     end)
 
-    -- fix: always restore the original asset ids, even if serialization failed
-    revertPatches(appliedPatches)
+    -- always restore the original asset ids, even if serialization failed
+    pcall(revertPatches, appliedPatches)
 
     if not ok then
         if ui then
