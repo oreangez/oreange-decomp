@@ -415,13 +415,36 @@ local function loadImg(svc, url)
     return nil, lastErr
 end
 
--- NEW: apply local-asset patches to the live instances so USSI serializes
--- rbxasset:// paths instead of rbxassetid://. Never touches read-only props
--- like MeshPart.MeshId (NotScriptable) and pcall's every write so a single
--- bad instance can never abort the whole save.
-local PATCH_BLACKLIST = {
-    MeshPart_MeshId = true,
-}
+-- NEW: check if every required mesh / image file already exists on disk
+local function assetsMissing(meshes, images, meshDir, texDir)
+    for _, e in meshes do
+        if not isfile(meshDir .. "/" .. meshName(e.id)) then return true end
+    end
+    for _, e in images do
+        if not isfile(texDir .. "/" .. imgName(e.url)) then return true end
+    end
+    return false
+end
+
+-- NEW: build patches pointing at already-extracted files (no re-extraction)
+local function buildExistingPatches(meshes, images, meshDir, texDir)
+    local patches = {}
+    for _, e in meshes do
+        local patchUrl = "rbxasset://meshes/" .. meshName(e.id)
+        for _, inst in e.instances do
+            if inst.ClassName ~= "MeshPart" then
+                table.insert(patches, { instance = inst, prop = "MeshId", customURL = patchUrl })
+            end
+        end
+    end
+    for _, e in images do
+        local patchUrl = "rbxasset://textures/" .. imgName(e.url)
+        for _, patch in e.patches do
+            table.insert(patches, { instance = patch.instance, prop = patch.prop, customURL = patchUrl })
+        end
+    end
+    return patches
+end
 
 local function isPatchable(inst, prop)
     if prop == "MeshId" and inst.ClassName == "MeshPart" then return false end
@@ -488,9 +511,7 @@ local function exportMeshes(entries, dir)
         rep.saved += 1
         local patchUrl = "rbxasset://meshes/" .. name
         for _, inst in entry.instances do
-            -- MeshPart.MeshId is read-only at runtime — skip it so we don't
-            -- blow up the save. SpecialMesh.MeshId is writable and gets patched.
-            if not (inst.ClassName == "MeshPart") then
+            if inst.ClassName ~= "MeshPart" then
                 table.insert(rep.patches, { instance = inst, prop = "MeshId", customURL = patchUrl })
             end
         end
@@ -898,8 +919,15 @@ local function save(fname, root, options)
     local ok, err = pcall(function()
         local path = targetPath(vals, root, isPlace)
         local base = path and (string.gsub(path, "%.[^/\\%.]+$", "")) or ("oreange_decomp/Game")
-        local meshDir = base .. "/meshes"
-        local texDir = base .. "/textures"
+
+        -- Asset folder: strip the auto-generated " (n)" suffix so repeat runs
+        -- reuse the meshes/textures written by the first run.
+        local assetBase = base
+        if vals.FilePath == "" then
+            assetBase = string.gsub(base, " %(%d+%)$", "")
+        end
+        local meshDir = assetBase .. "/meshes"
+        local texDir = assetBase .. "/textures"
 
         local meshes, images = {}, {}
         if vals.SaveMeshes or vals.SaveImages then
@@ -908,51 +936,62 @@ local function save(fname, root, options)
             end)
         end
 
-        -- gather every patch produced by the exporters
         local patches = {}
 
-        if vals.SaveMeshes and #meshes > 0 then
-            if ui then ui.startLoading("decompiling meshes", Color3.fromRGB(255, 255, 255)) end
-            local rep = exportMeshes(meshes, meshDir)
-            local lastDone = -1
-            while not rep.done do
-                local cur = rep.saved + rep.failed
-                if cur ~= lastDone then
-                    lastDone = cur
-                    if ui then ui.setLoadingText(string.format("decompiling meshes %d/%d", cur, #meshes)) end
-                end
-                task.wait(0.1)
-            end
-            for _, p in rep.patches do patches[#patches+1] = p end
-            upd("meshes extracted successfully", Color3.fromRGB(0, 255, 0))
-            task.wait(1.5)
+        -- NEW: if the game folder already contains every required asset file,
+        -- skip extraction entirely and go straight to serialization.
+        local reuseAssets = false
+        if (#meshes > 0 or #images > 0)
+            and not assetsMissing(meshes, images, meshDir, texDir) then
+            reuseAssets = true
         end
 
-        if vals.SaveImages and #images > 0 then
-            if #images > 500 then
-                if ui then ui.showWarning() end
-                upd("way to many texutres, folder size will be large", Color3.fromRGB(255, 255, 255))
-            end
-            
-            if ui then ui.startLoading("decompiling textures", Color3.fromRGB(255, 255, 255)) end
-            local rep = exportImages(images, texDir, state, function(lossCount)
-                if ui then ui.setLoss(lossCount) end
-            end)
-            local lastDone = -1
-            while not rep.done do
-                local cur = rep.saved + rep.failed
-                if cur ~= lastDone then
-                    lastDone = cur
-                    if ui then ui.setLoadingText(string.format("decompiling textures %d/%d", cur, #images)) end
+        if reuseAssets then
+            upd(string.format("assets already extracted, reusing %d meshes + %d textures",
+                #meshes, #images), Color3.fromRGB(0, 255, 0))
+            patches = buildExistingPatches(meshes, images, meshDir, texDir)
+        else
+            if vals.SaveMeshes and #meshes > 0 then
+                if ui then ui.startLoading("decompiling meshes", Color3.fromRGB(255, 255, 255)) end
+                local rep = exportMeshes(meshes, meshDir)
+                local lastDone = -1
+                while not rep.done do
+                    local cur = rep.saved + rep.failed
+                    if cur ~= lastDone then
+                        lastDone = cur
+                        if ui then ui.setLoadingText(string.format("decompiling meshes %d/%d", cur, #meshes)) end
+                    end
+                    task.wait(0.1)
                 end
-                task.wait(0.1)
+                for _, p in rep.patches do patches[#patches+1] = p end
+                upd("meshes extracted successfully", Color3.fromRGB(0, 255, 0))
+                task.wait(1.5)
             end
-            for _, p in rep.patches do patches[#patches+1] = p end
-            upd(string.format("textures done: %d ok, %d failed", rep.saved, rep.failed), Color3.fromRGB(255, 255, 255))
+
+            if vals.SaveImages and #images > 0 then
+                if #images > 500 then
+                    if ui then ui.showWarning() end
+                    upd("way to many texutres, folder size will be large", Color3.fromRGB(255, 255, 255))
+                end
+                
+                if ui then ui.startLoading("decompiling textures", Color3.fromRGB(255, 255, 255)) end
+                local rep = exportImages(images, texDir, state, function(lossCount)
+                    if ui then ui.setLoss(lossCount) end
+                end)
+                local lastDone = -1
+                while not rep.done do
+                    local cur = rep.saved + rep.failed
+                    if cur ~= lastDone then
+                        lastDone = cur
+                        if ui then ui.setLoadingText(string.format("decompiling textures %d/%d", cur, #images)) end
+                    end
+                    task.wait(0.1)
+                end
+                for _, p in rep.patches do patches[#patches+1] = p end
+                upd(string.format("textures done: %d ok, %d failed", rep.saved, rep.failed), Color3.fromRGB(255, 255, 255))
+            end
         end
 
-        -- FIX: apply patches inside pcall so a single bad write can never
-        -- abort the save before USSI runs.
         if #patches > 0 then
             if ui then ui.startLoading("linking local assets", Color3.fromRGB(255, 255, 255)) end
             local okPatch, appliedOrErr, skipped = pcall(applyPatches, patches)
@@ -1028,7 +1067,6 @@ local function save(fname, root, options)
         upd("saved: " .. (path or "(clipboard)"), Color3.fromRGB(0, 255, 0))
     end)
 
-    -- always restore the original asset ids, even if serialization failed
     pcall(revertPatches, appliedPatches)
 
     if not ok then
