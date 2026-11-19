@@ -5,6 +5,7 @@
 local cmd, a, b = ...
 
 local USSI_URL = "https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau"
+local ASSET_DELIVERY = "https://assetdelivery.roblox.com/v1/asset/?id="
 local genv = (type(getgenv) == "function" and getgenv()) or getfenv(0)
 local TweenService = game:GetService("TweenService")
 
@@ -13,7 +14,8 @@ local OPTIONS = {
     SavePlayers = "boolean", DisableCompression = "boolean", SaveNonCreatable = "boolean",
     SaveNilInstances = "boolean", CopyToClipboard = "boolean", IgnoreList = "table",
     ShowStatus = "boolean", SafeMode = "boolean", SaveMeshes = "boolean", 
-    SaveImages = "boolean", DisableLogs = "boolean", TextureQuality = "number"
+    SaveImages = "boolean", DisableLogs = "boolean", TextureQuality = "number",
+    SaveSounds = "boolean", SaveAnimations = "boolean"
 }
 
 local optValues = setmetatable({}, { __mode = "k" })
@@ -26,7 +28,8 @@ function SaveInstanceOptions.new()
         SavePlayers = true, DisableCompression = false, SaveNonCreatable = true, 
         SaveNilInstances = true, CopyToClipboard = false, IgnoreList = {}, 
         ShowStatus = true, SafeMode = false, SaveMeshes = true, 
-        SaveImages = true, DisableLogs = false, TextureQuality = 1
+        SaveImages = true, DisableLogs = false, TextureQuality = 1,
+        SaveSounds = true, SaveAnimations = true
     }
     optValues[obj] = v
     setmetatable(obj, {
@@ -63,7 +66,9 @@ local ALIASES = {
     instancesblacklist="IgnoreList", showstatus="ShowStatus", showprogress="ShowStatus", safemode="SafeMode", 
     savemeshes="SaveMeshes", meshes="SaveMeshes", exportmeshes="SaveMeshes", saveimages="SaveImages", 
     images="SaveImages", exportimages="SaveImages", disablelogs="DisableLogs", silent="DisableLogs", 
-    nologs="DisableLogs", disableconsole="DisableLogs", texturequality="TextureQuality", quality="TextureQuality"
+    nologs="DisableLogs", disableconsole="DisableLogs", texturequality="TextureQuality", quality="TextureQuality",
+    savesounds="SaveSounds", sounds="SaveSounds", exportsounds="SaveSounds",
+    saveanimations="SaveAnimations", animations="SaveAnimations", saveanims="SaveAnimations", exportanimations="SaveAnimations"
 }
 
 local function fromTable(src)
@@ -185,6 +190,57 @@ local function meshName(id)
     local d = string.match(id, "[?&/]id=(%d+)") or string.match(id, "(%d+)%s*$")
     if d then return d .. ".mesh" end
     return (string.gsub(id, "[^%w%-_]", "_")) .. ".mesh"
+end
+
+local function soundIdOf(inst)
+    if inst.ClassName ~= "Sound" then return nil end
+    local ok, id = pcall(function() return inst.SoundId end)
+    if not ok or type(id) ~= "string" or id == "" then return nil end
+    return id
+end
+
+local function extractSoundAssetId(url)
+    if not url or url == "" then return nil end
+    if string.find(url, "rbxasset://", 1, true) == 1 then return nil end
+    return string.match(url, "rbxassetid://(%d+)") or string.match(url, "(%d+)%s*$")
+end
+
+local function soundFileName(assetId)
+    return assetId .. ".mp3"
+end
+
+local function downloadSound(assetId)
+    if not assetId then return nil, "no id" end
+    local assetUrl = ASSET_DELIVERY .. assetId
+    local ok, body = pcall(function() return game:HttpGet(assetUrl, true) end)
+    if ok and type(body) == "string" and #body > 0 then return body end
+    local req = genv.request or genv.http_request or (http and http.request)
+    if req then
+        local okR, resp = pcall(req, { Url = assetUrl, Method = "GET" })
+        if okR and resp and resp.Body and type(resp.Body) == "string" and #resp.Body > 0 then
+            return resp.Body
+        end
+    end
+    return nil, tostring(body)
+end
+
+local function animIdOf(inst)
+    if inst.ClassName ~= "Animation" then return nil end
+    local ok, id = pcall(function() return inst.AnimationId end)
+    if not ok or type(id) ~= "string" or id == "" then return nil end
+    return id
+end
+
+local function extractAnimAssetId(url)
+    if not url or url == "" then return nil end
+    if string.find(url, "rbxasset://", 1, true) == 1 then return nil end
+    return string.match(url, "rbxassetid://(%d+)") or string.match(url, "(%d+)%s*$")
+end
+
+local function animFileName(entry)
+    local safe = string.gsub(entry.name or "anim", "[^%w%-_]", "")
+    if safe == "" then safe = "anim" end
+    return safe .. "_" .. tostring(entry.id) .. ".rbxm"
 end
 
 local function encodeMesh(mesh)
@@ -416,18 +472,28 @@ local function loadImg(svc, url)
 end
 
 -- NEW: check if every required mesh / image file already exists on disk
-local function assetsMissing(meshes, images, meshDir, texDir)
+local function assetsMissing(meshes, images, meshDir, texDir, sounds, anims, soundDir, animDir)
     for _, e in meshes do
         if not isfile(meshDir .. "/" .. meshName(e.id)) then return true end
     end
     for _, e in images do
         if not isfile(texDir .. "/" .. imgName(e.url)) then return true end
     end
+    if sounds then
+        for _, e in sounds do
+            if not isfile(soundDir .. "/" .. soundFileName(e.id)) then return true end
+        end
+    end
+    if anims then
+        for _, e in anims do
+            if not isfile(animDir .. "/" .. animFileName(e)) then return true end
+        end
+    end
     return false
 end
 
 -- NEW: build patches pointing at already-extracted files (no re-extraction)
-local function buildExistingPatches(meshes, images, meshDir, texDir)
+local function buildExistingPatches(meshes, images, meshDir, texDir, sounds, anims, soundDir, animDir)
     local patches = {}
     for _, e in meshes do
         local patchUrl = "rbxasset://meshes/" .. meshName(e.id)
@@ -443,7 +509,147 @@ local function buildExistingPatches(meshes, images, meshDir, texDir)
             table.insert(patches, { instance = patch.instance, prop = patch.prop, customURL = patchUrl })
         end
     end
+    if sounds then
+        for _, e in sounds do
+            local patchUrl = "rbxasset://sounds/" .. soundFileName(e.id)
+            for _, inst in e.instances do
+                table.insert(patches, { instance = inst, prop = "SoundId", customURL = patchUrl })
+            end
+        end
+    end
+    if anims then
+        for _, e in anims do
+            local patchUrl = "rbxasset://animations/" .. animFileName(e)
+            for _, inst in e.instances do
+                table.insert(patches, { instance = inst, prop = "AnimationId", customURL = patchUrl })
+            end
+        end
+    end
     return patches
+end
+
+local function exportSounds(entries, dir, state, updateUI)
+    local rep = { saved = 0, failed = 0, reason = nil, patches = {}, done = false }
+    if #entries == 0 then rep.done = true; return rep end
+    local made = false
+    local idx, running = 0, 8
+    local function one(entry)
+        local body, reason = downloadSound(entry.id)
+        if not body then
+            rep.failed += 1
+            state.soundLoss += 1
+            pcall(updateUI, state.soundLoss)
+            rep.reason = rep.reason or reason or "unknown"
+            return
+        end
+        local name = soundFileName(entry.id)
+        if not made then made = true; mkFolder(dir) end
+        local okW, werr = pcall(writefile, dir .. "/" .. name, body)
+        if not okW then
+            rep.failed += 1
+            state.soundLoss += 1
+            pcall(updateUI, state.soundLoss)
+            rep.reason = rep.reason or tostring(werr)
+            return
+        end
+        rep.saved += 1
+        local patchUrl = "rbxasset://sounds/" .. name
+        for _, inst in entry.instances do
+            table.insert(rep.patches, { instance = inst, prop = "SoundId", customURL = patchUrl })
+        end
+    end
+    for _ = 1, running do
+        task.spawn(function()
+            while true do
+                idx += 1
+                local e = entries[idx]
+                if not e then break end
+                local ok, err = pcall(one, e)
+                if not ok then rep.failed += 1; state.soundLoss += 1; rep.reason = rep.reason or tostring(err) end
+            end
+            running -= 1
+            if running == 0 then rep.done = true end
+        end)
+    end
+    return rep
+end
+
+local function exportAnimations(entries, dir, ussi, state, updateUI)
+    local rep = { saved = 0, failed = 0, reason = nil, patches = {}, done = false }
+    if #entries == 0 then rep.done = true; return rep end
+    if type(ussi) ~= "function" then
+        rep.done = true
+        rep.failed = #entries
+        rep.reason = "ussi unavailable"
+        return rep
+    end
+    local made = false
+    local idx, running = 0, 1
+    local clipProvider = game:GetService("AnimationClipProvider")
+    local function one(entry)
+        local ok, clip = pcall(function()
+            return clipProvider:GetAnimationClipAsync("rbxassetid://" .. entry.id)
+        end)
+        if not ok or not clip then
+            rep.failed += 1
+            state.animLoss += 1
+            pcall(updateUI, state.animLoss)
+            rep.reason = rep.reason or tostring(clip)
+            return
+        end
+        local name = animFileName(entry)
+        if not made then made = true; mkFolder(dir) end
+        local filePath = dir .. "/" .. name
+        local serialized
+        local ussiOpts = {
+            Binary = true, CompressionMode = false,
+            Decompile = false, IgnoreNotArchivable = true,
+            SavePlayerCharacters = false, IsolatePlayers = false,
+            SaveNotCreatable = true, NilInstances = false,
+            IgnoreList = {}, FilePath = filePath, ShowStatus = false, ReadMe = false,
+            SafeMode = false, SaveMeshes = false, scriptcache = false, CompressionLevel = 0,
+            Callback = function(ser) serialized = ser end,
+            mode = "full",
+        }
+        local okS = pcall(ussi, clip, ussiOpts)
+        pcall(function() clip:Destroy() end)
+        if not okS or not serialized then
+            rep.failed += 1
+            state.animLoss += 1
+            pcall(updateUI, state.animLoss)
+            rep.reason = rep.reason or "serialize failed"
+            return
+        end
+        if not isfile(filePath) then
+            local okW, werr = pcall(writefile, filePath, serialized)
+            if not okW then
+                rep.failed += 1
+                state.animLoss += 1
+                pcall(updateUI, state.animLoss)
+                rep.reason = rep.reason or tostring(werr)
+                return
+            end
+        end
+        rep.saved += 1
+        local patchUrl = "rbxasset://animations/" .. name
+        for _, inst in entry.instances do
+            table.insert(rep.patches, { instance = inst, prop = "AnimationId", customURL = patchUrl })
+        end
+    end
+    for _ = 1, running do
+        task.spawn(function()
+            while true do
+                idx += 1
+                local e = entries[idx]
+                if not e then break end
+                local ok, err = pcall(one, e)
+                if not ok then rep.failed += 1; state.animLoss += 1; rep.reason = rep.reason or tostring(err) end
+            end
+            running -= 1
+            if running == 0 then rep.done = true end
+        end)
+    end
+    return rep
 end
 
 local function isPatchable(inst, prop)
@@ -619,8 +825,12 @@ local function collect(isPlace, root, vals, onProgress)
     end
     local meshes, meshKey = {}, {}
     local images, imgKey = {}, {}
+    local sounds, soundKey = {}, {}
+    local anims, animKey = {}, {}
     local wantMeshes = vals.SaveMeshes
     local wantImages = vals.SaveImages
+    local wantSounds = vals.SaveSounds
+    local wantAnims = vals.SaveAnimations
 
     local function consider(inst)
         if skip[inst] then return end
@@ -655,6 +865,36 @@ local function collect(isPlace, root, vals, onProgress)
                 end
             end
         end
+        if wantSounds and cls == "Sound" then
+            local url = soundIdOf(inst)
+            if url then
+                local assetId = extractSoundAssetId(url)
+                if assetId then
+                    local entry = soundKey[assetId]
+                    if not entry then
+                        entry = { id = assetId, url = url, instances = {} }
+                        soundKey[assetId] = entry
+                        sounds[#sounds+1] = entry
+                    end
+                    table.insert(entry.instances, inst)
+                end
+            end
+        end
+        if wantAnims and cls == "Animation" then
+            local url = animIdOf(inst)
+            if url then
+                local assetId = extractAnimAssetId(url)
+                if assetId then
+                    local entry = animKey[assetId]
+                    if not entry then
+                        entry = { id = assetId, url = url, instances = {}, name = inst.Name or "anim" }
+                        animKey[assetId] = entry
+                        anims[#anims+1] = entry
+                    end
+                    table.insert(entry.instances, inst)
+                end
+            end
+        end
     end
 
     local function walk(c)
@@ -686,7 +926,7 @@ local function collect(isPlace, root, vals, onProgress)
             for _, inst in list do if typeof(inst) == "Instance" then walk(inst) end end
         end
     end
-    return meshes, images
+    return meshes, images, sounds, anims
 end
 
 local function makeUI()
@@ -832,9 +1072,9 @@ local function makeUI()
         setLoadingText = function(t)
             LoadingText = t
         end,
-        setLoss = function(count)
+        setLoss = function(count, label)
             if lossLbl and lossLbl.Parent then
-                lossLbl.Text = "textures loss: " .. tostring(count)
+                lossLbl.Text = (label or "textures loss") .. ": " .. tostring(count)
                 if count > 0 then
                     lossLbl.Visible = true
                 end
@@ -887,7 +1127,7 @@ local function save(fname, root, options)
         error("Instance or {Instance} expected", 3)
     end
 
-    local state = { textureLoss = 0, textureQuality = vals.TextureQuality, disableLogs = vals.DisableLogs }
+    local state = { textureLoss = 0, textureQuality = vals.TextureQuality, disableLogs = vals.DisableLogs, soundLoss = 0, animLoss = 0 }
     local ui
     pcall(function() ui = makeUI() end)
 
@@ -915,8 +1155,29 @@ local function save(fname, root, options)
     upd("reading game...", Color3.fromRGB(255, 255, 255))
 
     local appliedPatches = nil
+    local ussi
 
     local ok, err = pcall(function()
+        local okSrc, src = pcall(game.HttpGet, game, USSI_URL)
+        if not okSrc or type(src) ~= "string" or #src == 0 then error("could not download ussi") end
+        local chunk, compileErr = loadstring(src, "saveinstance")
+        if not chunk then error("could not compile ussi: " .. tostring(compileErr)) end
+        
+        local env = setmetatable({
+            writefile = writefile, readfile = readfile, isfile = isfile, isfolder = isfolder,
+            makefolder = makefolder, request = getgenv().request or getgenv().http_request or http.request,
+            getcustomasset = function(p) return p end, getnilinstances = getnilinstances or function() return {} end,
+            getgc = function() return {} end, cloneref = function(o) return o end,
+            gethui = function() return game:GetService("CoreGui") end, isreadonly = function() return false end,
+            setreadonly = function() end, hookfunction = function() end,
+            getrawmetatable = function(o) return getmetatable(o) end,
+            setrbxclipboard = getgenv().setrbxclipboard or function() end
+        }, { __index = getgenv() })
+        
+        setfenv(chunk, env)
+        ussi = chunk()
+        if type(ussi) ~= "function" then error("ussi did not return a function") end
+
         local path = targetPath(vals, root, isPlace)
         local base = path and (string.gsub(path, "%.[^/\\%.]+$", "")) or ("oreange_decomp/Game")
 
@@ -928,10 +1189,12 @@ local function save(fname, root, options)
         end
         local meshDir = assetBase .. "/meshes"
         local texDir = assetBase .. "/textures"
+        local soundDir = assetBase .. "/sounds"
+        local animDir = assetBase .. "/animations"
 
-        local meshes, images = {}, {}
-        if vals.SaveMeshes or vals.SaveImages then
-            meshes, images = collect(isPlace, root, vals, function(i, n, name)
+        local meshes, images, sounds, anims = {}, {}, {}, {}
+        if vals.SaveMeshes or vals.SaveImages or vals.SaveSounds or vals.SaveAnimations then
+            meshes, images, sounds, anims = collect(isPlace, root, vals, function(i, n, name)
                 upd(string.format("scanning %s (%d/%d)", name, i, n), Color3.fromRGB(255, 255, 255))
             end)
         end
@@ -941,15 +1204,15 @@ local function save(fname, root, options)
         -- NEW: if the game folder already contains every required asset file,
         -- skip extraction entirely and go straight to serialization.
         local reuseAssets = false
-        if (#meshes > 0 or #images > 0)
-            and not assetsMissing(meshes, images, meshDir, texDir) then
+        if (#meshes > 0 or #images > 0 or #sounds > 0 or #anims > 0)
+            and not assetsMissing(meshes, images, meshDir, texDir, sounds, anims, soundDir, animDir) then
             reuseAssets = true
         end
 
         if reuseAssets then
-            upd(string.format("assets already extracted, reusing %d meshes + %d textures",
-                #meshes, #images), Color3.fromRGB(0, 255, 0))
-            patches = buildExistingPatches(meshes, images, meshDir, texDir)
+            upd(string.format("assets already extracted, reusing %d meshes + %d textures + %d sounds + %d animations",
+                #meshes, #images, #sounds, #anims), Color3.fromRGB(0, 255, 0))
+            patches = buildExistingPatches(meshes, images, meshDir, texDir, sounds, anims, soundDir, animDir)
         else
             if vals.SaveMeshes and #meshes > 0 then
                 if ui then ui.startLoading("decompiling meshes", Color3.fromRGB(255, 255, 255)) end
@@ -990,6 +1253,42 @@ local function save(fname, root, options)
                 for _, p in rep.patches do patches[#patches+1] = p end
                 upd(string.format("textures done: %d ok, %d failed", rep.saved, rep.failed), Color3.fromRGB(255, 255, 255))
             end
+
+            if vals.SaveSounds and #sounds > 0 then
+                if ui then ui.startLoading("downloading sounds", Color3.fromRGB(255, 255, 255)) end
+                local rep = exportSounds(sounds, soundDir, state, function(lossCount)
+                    if ui then ui.setLoss(lossCount, "sounds loss") end
+                end)
+                local lastDone = -1
+                while not rep.done do
+                    local cur = rep.saved + rep.failed
+                    if cur ~= lastDone then
+                        lastDone = cur
+                        if ui then ui.setLoadingText(string.format("downloading sounds %d/%d", cur, #sounds)) end
+                    end
+                    task.wait(0.1)
+                end
+                for _, p in rep.patches do patches[#patches+1] = p end
+                upd(string.format("sounds done: %d ok, %d failed", rep.saved, rep.failed), Color3.fromRGB(255, 255, 255))
+            end
+
+            if vals.SaveAnimations and #anims > 0 then
+                if ui then ui.startLoading("downloading animations", Color3.fromRGB(255, 255, 255)) end
+                local rep = exportAnimations(anims, animDir, ussi, state, function(lossCount)
+                    if ui then ui.setLoss(lossCount, "animations loss") end
+                end)
+                local lastDone = -1
+                while not rep.done do
+                    local cur = rep.saved + rep.failed
+                    if cur ~= lastDone then
+                        lastDone = cur
+                        if ui then ui.setLoadingText(string.format("downloading animations %d/%d", cur, #anims)) end
+                    end
+                    task.wait(0.1)
+                end
+                for _, p in rep.patches do patches[#patches+1] = p end
+                upd(string.format("animations done: %d ok, %d failed", rep.saved, rep.failed), Color3.fromRGB(255, 255, 255))
+            end
         end
 
         if #patches > 0 then
@@ -1006,26 +1305,6 @@ local function save(fname, root, options)
 
         if ui then ui.startLoading("saving game...", Color3.fromRGB(255, 255, 255)) end
         if not vals.DisableLogs then print("saving game...") end
-
-        local okSrc, src = pcall(game.HttpGet, game, USSI_URL)
-        if not okSrc or type(src) ~= "string" or #src == 0 then error("could not download ussi") end
-        local chunk, compileErr = loadstring(src, "saveinstance")
-        if not chunk then error("could not compile ussi: " .. tostring(compileErr)) end
-        
-        local env = setmetatable({
-            writefile = writefile, readfile = readfile, isfile = isfile, isfolder = isfolder,
-            makefolder = makefolder, request = getgenv().request or getgenv().http_request or http.request,
-            getcustomasset = function(p) return p end, getnilinstances = getnilinstances or function() return {} end,
-            getgc = function() return {} end, cloneref = function(o) return o end,
-            gethui = function() return game:GetService("CoreGui") end, isreadonly = function() return false end,
-            setreadonly = function() end, hookfunction = function() end,
-            getrawmetatable = function(o) return getmetatable(o) end,
-            setrbxclipboard = getgenv().setrbxclipboard or function() end
-        }, { __index = getgenv() })
-        
-        setfenv(chunk, env)
-        local ussi = chunk()
-        if type(ussi) ~= "function" then error("ussi did not return a function") end
 
         local okU, errU = pcall(function()
             local ignore = { "CoreGui", "CorePackages", Packages = false }
