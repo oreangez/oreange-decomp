@@ -4,7 +4,7 @@
 
 local cmd, a, b = ...
 
-local USSI_URL = "https://raw.githubusercontent.com/luau/SynSaveInstance/main/saveinstance.luau"
+local USSI_URL = "https://github.com/oreangez/oreange-decomp/blob/main/saveinstance.luau"
 local ASSET_DELIVERY = "https://assetdelivery.roblox.com/v1/asset/?id="
 local genv = (type(getgenv) == "function" and getgenv()) or getfenv(0)
 local TweenService = game:GetService("TweenService")
