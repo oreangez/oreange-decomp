@@ -1483,13 +1483,25 @@ do
 			end
 
 			for version_hash in matching_versions do
+				local url = "https://setup.rbxcdn.com/" .. version_hash .. "-Full-API-Dump.json"
+				print("Attempting to fetch:", url)
 				ok, result = pcall(
 					game.HttpGet,
 					game,
-					"https://setup.rbxcdn.com/" .. version_hash .. "-Full-API-Dump.json",
+					url,
 					true
 				)
 				if ok then
+					print("Successfully downloaded API dump from:", url)
+					local o, r = pcall(service.HttpService.JSONDecode, service.HttpService, result)
+					if o then
+						API_Dump = service.HttpService:JSONEncode(r.Classes)
+						break
+					end
+				else
+					print("Failed to download API dump from:", url, "Reason:", result)
+				end
+			end
 					local o, r = pcall(service.HttpService.JSONDecode, service.HttpService, result)
 					if o then
 						API_Dump = service.HttpService:JSONEncode(r.Classes) -- minify it
