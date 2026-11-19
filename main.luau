@@ -15,7 +15,7 @@ local OPTIONS = {
     SaveNilInstances = "boolean", CopyToClipboard = "boolean", IgnoreList = "table",
     ShowStatus = "boolean", SafeMode = "boolean", SaveMeshes = "boolean", 
     SaveImages = "boolean", DisableLogs = "boolean", TextureQuality = "number",
-    SaveSounds = "boolean", SaveAnimations = "boolean"
+    SaveSounds = "boolean", SaveAnimations = "boolean", SaveAnimationsAsFiles = "boolean"
 }
 
 local optValues = setmetatable({}, { __mode = "k" })
@@ -29,7 +29,7 @@ function SaveInstanceOptions.new()
         SaveNilInstances = true, CopyToClipboard = false, IgnoreList = {}, 
         ShowStatus = true, SafeMode = false, SaveMeshes = true, 
         SaveImages = true, DisableLogs = false, TextureQuality = 1,
-        SaveSounds = true, SaveAnimations = true
+        SaveSounds = true, SaveAnimations = true, SaveAnimationsAsFiles = false
     }
     optValues[obj] = v
     setmetatable(obj, {
@@ -68,7 +68,9 @@ local ALIASES = {
     images="SaveImages", exportimages="SaveImages", disablelogs="DisableLogs", silent="DisableLogs", 
     nologs="DisableLogs", disableconsole="DisableLogs", texturequality="TextureQuality", quality="TextureQuality",
     savesounds="SaveSounds", sounds="SaveSounds", exportsounds="SaveSounds",
-    saveanimations="SaveAnimations", animations="SaveAnimations", saveanims="SaveAnimations", exportanimations="SaveAnimations"
+    saveanimations="SaveAnimations", animations="SaveAnimations", saveanims="SaveAnimations", exportanimations="SaveAnimations",
+    saveanimationsasfiles="SaveAnimationsAsFiles", animationsasfiles="SaveAnimationsAsFiles",
+    animfiles="SaveAnimationsAsFiles", saveanimfiles="SaveAnimationsAsFiles", exportanimationsasfiles="SaveAnimationsAsFiles"
 }
 
 local function fromTable(src)
@@ -479,12 +481,12 @@ local function assetsMissing(meshes, images, meshDir, texDir, sounds, anims, sou
     for _, e in images do
         if not isfile(texDir .. "/" .. imgName(e.url)) then return true end
     end
-    if sounds then
+    if sounds and soundDir then
         for _, e in sounds do
             if not isfile(soundDir .. "/" .. soundFileName(e.id)) then return true end
         end
     end
-    if anims then
+    if anims and animDir then
         for _, e in anims do
             if not isfile(animDir .. "/" .. animFileName(e)) then return true end
         end
@@ -509,7 +511,7 @@ local function buildExistingPatches(meshes, images, meshDir, texDir, sounds, ani
             table.insert(patches, { instance = patch.instance, prop = patch.prop, customURL = patchUrl })
         end
     end
-    if sounds then
+    if sounds and soundDir then
         for _, e in sounds do
             local patchUrl = "rbxasset://sounds/" .. soundFileName(e.id)
             for _, inst in e.instances do
@@ -517,7 +519,7 @@ local function buildExistingPatches(meshes, images, meshDir, texDir, sounds, ani
             end
         end
     end
-    if anims then
+    if anims and animDir then
         for _, e in anims do
             local patchUrl = "rbxasset://animations/" .. animFileName(e)
             for _, inst in e.instances do
@@ -650,6 +652,79 @@ local function exportAnimations(entries, dir, ussi, state, updateUI)
         end)
     end
     return rep
+end
+
+local function inlineAnimations(entries, state, updateUI)
+    local rep = { saved = 0, failed = 0, reason = nil, reverted = {}, done = false }
+    if #entries == 0 then rep.done = true; return rep end
+    local clipProvider = game:GetService("AnimationClipProvider")
+    local idx, running = 0, 1
+    local function one(entry)
+        local ok, clip = pcall(function()
+            return clipProvider:GetAnimationClipAsync("rbxassetid://" .. entry.id)
+        end)
+        if not ok or not clip then
+            rep.failed += 1
+            state.animLoss += 1
+            pcall(updateUI, state.animLoss)
+            rep.reason = rep.reason or tostring(clip)
+            return
+        end
+        for _, inst in entry.instances do
+            if typeof(inst) == "Instance" and inst.Parent then
+                local okClone, cloned = pcall(function() return clip:Clone() end)
+                if okClone and cloned then
+                    local parent = inst.Parent
+                    local animName = inst.Name ~= "" and inst.Name or ("anim_" .. entry.id)
+                    pcall(function()
+                        cloned.Name = animName
+                        pcall(function() cloned.Priority = inst.Priority end)
+                    end)
+                    local okDetach = pcall(function() inst.Parent = nil end)
+                    local okAttach = pcall(function() cloned.Parent = parent end)
+                    if okDetach and okAttach then
+                        table.insert(rep.reverted, { original = inst, replacement = cloned, parent = parent })
+                        rep.saved += 1
+                    else
+                        pcall(function() cloned:Destroy() end)
+                        if okDetach then pcall(function() inst.Parent = parent end) end
+                        rep.failed += 1
+                        state.animLoss += 1
+                        pcall(updateUI, state.animLoss)
+                    end
+                else
+                    rep.failed += 1
+                    state.animLoss += 1
+                    pcall(updateUI, state.animLoss)
+                end
+            end
+        end
+        pcall(function() clip:Destroy() end)
+    end
+    for _ = 1, running do
+        task.spawn(function()
+            while true do
+                idx += 1
+                local e = entries[idx]
+                if not e then break end
+                local ok, err = pcall(one, e)
+                if not ok then rep.failed += 1; state.animLoss += 1; pcall(updateUI, state.animLoss) end
+            end
+            running -= 1
+            if running == 0 then rep.done = true end
+        end)
+    end
+    return rep
+end
+
+local function revertInlineAnimations(reverted)
+    if not reverted then return end
+    for _, r in reverted do
+        pcall(function()
+            if r.replacement and r.replacement.Parent then r.replacement.Parent = nil end
+            if r.original and r.parent and not r.original.Parent then r.original.Parent = r.parent end
+        end)
+    end
 end
 
 local function isPatchable(inst, prop)
@@ -1155,6 +1230,7 @@ local function save(fname, root, options)
     upd("reading game...", Color3.fromRGB(255, 255, 255))
 
     local appliedPatches = nil
+    local revertedAnims = nil
     local ussi
 
     local ok, err = pcall(function()
@@ -1201,18 +1277,27 @@ local function save(fname, root, options)
 
         local patches = {}
 
+        local animsAsFiles = vals.SaveAnimations and vals.SaveAnimationsAsFiles
+        local animsInline = vals.SaveAnimations and not vals.SaveAnimationsAsFiles
+        local fileAnims = animsAsFiles and anims or nil
+        local fileAnimDir = animsAsFiles and animDir or nil
+
         -- NEW: if the game folder already contains every required asset file,
         -- skip extraction entirely and go straight to serialization.
         local reuseAssets = false
-        if (#meshes > 0 or #images > 0 or #sounds > 0 or #anims > 0)
-            and not assetsMissing(meshes, images, meshDir, texDir, sounds, anims, soundDir, animDir) then
+        if (#meshes > 0 or #images > 0 or #sounds > 0 or (fileAnims and #fileAnims > 0))
+            and not assetsMissing(meshes, images, meshDir, texDir, sounds, fileAnims, soundDir, fileAnimDir) then
             reuseAssets = true
         end
 
         if reuseAssets then
-            upd(string.format("assets already extracted, reusing %d meshes + %d textures + %d sounds + %d animations",
-                #meshes, #images, #sounds, #anims), Color3.fromRGB(0, 255, 0))
-            patches = buildExistingPatches(meshes, images, meshDir, texDir, sounds, anims, soundDir, animDir)
+            local reuseMsg = string.format("assets already extracted, reusing %d meshes + %d textures + %d sounds",
+                #meshes, #images, #sounds)
+            if fileAnims and #fileAnims > 0 then
+                reuseMsg = reuseMsg .. string.format(" + %d animations", #fileAnims)
+            end
+            upd(reuseMsg, Color3.fromRGB(0, 255, 0))
+            patches = buildExistingPatches(meshes, images, meshDir, texDir, sounds, fileAnims, soundDir, fileAnimDir)
         else
             if vals.SaveMeshes and #meshes > 0 then
                 if ui then ui.startLoading("decompiling meshes", Color3.fromRGB(255, 255, 255)) end
@@ -1272,7 +1357,7 @@ local function save(fname, root, options)
                 upd(string.format("sounds done: %d ok, %d failed", rep.saved, rep.failed), Color3.fromRGB(255, 255, 255))
             end
 
-            if vals.SaveAnimations and #anims > 0 then
+            if animsAsFiles and #anims > 0 then
                 if ui then ui.startLoading("downloading animations", Color3.fromRGB(255, 255, 255)) end
                 local rep = exportAnimations(anims, animDir, ussi, state, function(lossCount)
                     if ui then ui.setLoss(lossCount, "animations loss") end
@@ -1300,6 +1385,25 @@ local function save(fname, root, options)
             else
                 upd("patch apply failed: " .. tostring(appliedOrErr), Color3.fromRGB(255, 50, 50))
             end
+            task.wait(0.5)
+        end
+
+        if animsInline and #anims > 0 then
+            if ui then ui.startLoading("baking animations", Color3.fromRGB(255, 255, 255)) end
+            local rep = inlineAnimations(anims, state, function(lossCount)
+                if ui then ui.setLoss(lossCount, "animations loss") end
+            end)
+            local lastDone = -1
+            while not rep.done do
+                local cur = rep.saved + rep.failed
+                if cur ~= lastDone then
+                    lastDone = cur
+                    if ui then ui.setLoadingText(string.format("baking animations %d/%d", cur, #anims)) end
+                end
+                task.wait(0.1)
+            end
+            revertedAnims = rep.reverted
+            upd(string.format("animations baked inline: %d ok, %d failed", rep.saved, rep.failed), Color3.fromRGB(255, 255, 255))
             task.wait(0.5)
         end
 
@@ -1346,6 +1450,7 @@ local function save(fname, root, options)
         upd("saved: " .. (path or "(clipboard)"), Color3.fromRGB(0, 255, 0))
     end)
 
+    pcall(revertInlineAnimations, revertedAnims)
     pcall(revertPatches, appliedPatches)
 
     if not ok then
