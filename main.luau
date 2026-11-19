@@ -1236,6 +1236,7 @@ local function save(fname, root, options)
     local ok, err = pcall(function()
         local okSrc, src = pcall(game.HttpGet, game, USSI_URL)
         if not okSrc or type(src) ~= "string" or #src == 0 then error("could not download ussi") end
+        if string.sub(src, 1, 1) == "<" then error("ussi download returned HTML, check USSI_URL is correct") end
         local chunk, compileErr = loadstring(src, "saveinstance")
         if not chunk then error("could not compile ussi: " .. tostring(compileErr)) end
         
